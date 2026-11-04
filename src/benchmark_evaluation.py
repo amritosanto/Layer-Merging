@@ -11,7 +11,7 @@ from datasets import get_dataset_config_names,load_dataset
 from transformers import AutoTokenizer
 from benchmarks import mmmlu,include,mgsm
 from .utils import atomic_json,digest
-from .quantization import load_model,dequantized_copy
+from .quantization import load_model,dequantized_copy,MODEL_LOAD_LOCK
 
 def content_id(row):return hashlib.sha256(row['question'].strip().encode()).hexdigest()
 
@@ -214,7 +214,7 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         from transformers import AutoConfig,AutoModelForCausalLM
         dense_config=AutoConfig.from_pretrained(variant_spec['path'],revision=variant_spec['revision'])
         dense_config.num_hidden_layers=variant_spec['layers']
-        with torch.device('meta'):
+        with MODEL_LOAD_LOCK, torch.device('meta'):
             dense=AutoModelForCausalLM.from_config(dense_config)
         stats['parameters']=sum(p.numel() for p in dense.parameters()); del dense
         measured_control_bytes=None

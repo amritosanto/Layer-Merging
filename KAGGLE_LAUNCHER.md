@@ -12,8 +12,8 @@ launcher fetches the source snapshot at runtime.
    tables, charts, the Markdown report, and an analysis ZIP download.
 
 The launcher pins source commit `f59a42245e20a126c80965445de88c5af3f21a52`.
-It preserves Kaggle's installed CUDA PyTorch and installs project dependencies
-in a separate environment. Each experiment stage uses a separate process to
+It uses Kaggle's notebook Python and pip directly, with the installed PyTorch
+version constrained during dependency installation. Each experiment stage uses a separate process to
 release GPU memory on exit. No Hugging Face or GitHub token is required for these
 public repositories under normal access conditions.
 
@@ -58,10 +58,21 @@ Stage logs and execution history are saved under `launcher/`.
 
 ## Validation
 
-All eight code cells compile. Four local launcher tests passed, covering snapshot
-extraction, protection of modified source files, stage ordering, and failure
+All eight code cells compile. Five local launcher tests passed, covering the
+interpreter/pip selection, snapshot extraction, protection of modified source files, stage ordering, and failure
 logging. Run `python -m pytest -q launcher_tests` to repeat these tests.
 Generate the notebook with `python tools/build_github_launcher.py`.
 
 The launcher has not been executed on Kaggle's GPUs here. Model training and
 benchmark scores remain pending until the experiment actually runs there.
+
+## Fix for the initial installation error
+
+If the previous launcher reported `No module named pip` from a
+`qwen3-runtime-.../bin/python` path (possibly preceded by a missing `wrapt` startup
+hook warning), replace it with this updated notebook. It bypasses that incomplete
+virtual environment and checks the live notebook interpreter's pip before installing.
+The source commit, output path and experiment settings remain the same. No existing
+checkpoints or experiment outputs need to be deleted. Re-import the updated launcher
+and run it from the start, or replace its dependency-installation cell and rerun that
+cell and the following cells in the existing Kaggle session.

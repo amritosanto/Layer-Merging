@@ -114,11 +114,11 @@ print(f'Downloaded {len(payloads)} files from {GITHUB_REPOSITORY}@{GITHUB_COMMIT
 print('Source:', SOURCE)
 print('Snapshot SHA256:', hashlib.sha256(snapshot).hexdigest())
 ''')
-md('## 3. Restore outputs and install dependencies\nDependencies run in an isolated environment that inherits '
-   'Kaggle’s CUDA PyTorch. The notebook kernel does not import the research packages. '
+md('## 3. Restore outputs and install dependencies\nUse Kaggle’s notebook Python and working pip directly, '
+   'with its installed PyTorch version constrained. Research stages run in fresh subprocesses, '
+   'so they see installed package versions without importing them into the notebook kernel. '
    'Checkpoint loading is only for your own trusted saved outputs.')
 code('''import importlib.metadata
-import venv
 
 if RESTORE_FROM:
     previous = Path(RESTORE_FROM)
@@ -142,10 +142,10 @@ if provenance_path.exists():
         raise RuntimeError('Restored outputs use different source code. Choose a new OUTPUT directory.')
 provenance_path.write_text(json.dumps(provenance, indent=2))
 
-ENVIRONMENT = WORKING / ('qwen3-runtime-' + GITHUB_COMMIT[:12])
-PYTHON = ENVIRONMENT / 'bin/python'
-if not PYTHON.exists():
-    venv.EnvBuilder(with_pip=True, system_site_packages=True).create(ENVIRONMENT)
+# Kaggle's startup hooks rely on packages in its notebook environment. A newly
+# created or interrupted venv can lack both pip and those startup dependencies.
+# Never reuse the old qwen3-runtime-* environment; use the live kernel interpreter.
+PYTHON = Path(sys.executable)
 torch_version = importlib.metadata.version('torch')
 constraint = LAUNCHER / 'keep-kaggle-torch.txt'
 constraint.write_text(f'torch=={torch_version}\\n')
@@ -179,10 +179,11 @@ def run_command(arguments, log_name):
     if status:
         raise RuntimeError(f'Command failed with exit code {status}. See {log_path}')
 
+run_command([PYTHON, '-m', 'pip', '--version'], 'installation.log')
 run_command([PYTHON, '-m', 'pip', 'install', '--disable-pip-version-check',
              '-r', SOURCE / 'requirements.txt', '-c', constraint], 'installation.log')
 run_command([PYTHON, '-c',
-    "import torch; assert torch.__version__ == " + repr(torch_version) +
+    "import torch, importlib.metadata; assert importlib.metadata.version('torch') == " + repr(torch_version) +
     "; print('Preserved Kaggle PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda)"],
     'installation.log')
 ''')

@@ -64,3 +64,34 @@ def test_failed_stage_stops_and_records_failure(tmp_path):
     assert len(calls) == 1
     history = json.loads((tmp_path / 'stage_history.json').read_text())
     assert history[0]['status'] == 'failed_or_interrupted'
+
+def test_installation_uses_kernel_python_even_with_broken_venv(tmp_path, monkeypatch):
+    import hashlib
+    import importlib.metadata
+    import os
+    import shutil
+    import subprocess
+    import sys
+    broken = tmp_path / ('qwen3-runtime-' + 'a' * 12) / 'bin'
+    broken.mkdir(parents=True)
+    (broken / 'python').write_text('incomplete environment without pip')
+    calls = []
+    class Process:
+        stdout = ['mock subprocess output\n']
+        def __init__(self, args, **kwargs):
+            calls.append(args)
+        def wait(self, **kwargs):
+            return 0
+    monkeypatch.setattr(subprocess, 'Popen', Process)
+    monkeypatch.setattr(importlib.metadata, 'version', lambda name: '2.6.0+cu124')
+    scope = dict(Path=Path, RESTORE_FROM=None, OUTPUT=tmp_path/'outputs', WORKING=tmp_path,
+                 SOURCE=tmp_path, GITHUB_REPOSITORY='amritosanto/Layer-Merging', GITHUB_COMMIT='a'*40,
+                 payloads={'run.py': b'# fixture'}, hashlib=hashlib, json=json, os=os,
+                 shutil=shutil, subprocess=subprocess, sys=sys)
+    exec(code_cells()[2], scope)
+    assert len(calls) == 3
+    assert all(Path(args[0]) == Path(sys.executable) for args in calls)
+    assert calls[0][1:] == ['-m', 'pip', '--version']
+    assert calls[1][1:4] == ['-m', 'pip', 'install']
+    assert '-c' in calls[1]  # Keep the existing CUDA PyTorch version constrained.
+    assert (scope['LAUNCHER']/'keep-kaggle-torch.txt').read_text() == 'torch==2.6.0+cu124\n'

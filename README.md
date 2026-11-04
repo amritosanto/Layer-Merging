@@ -1,146 +1,43 @@
-# Qwen3 multilingual learned layer merger
+# Qwen3 CE-selected NF4 merger (experimental v2)
 
-An executable port of the supplied GPT-2 second-block-anchored merger to
-`Qwen/Qwen3-0.6B-Base`. Read [the architecture audit](ARCHITECTURE_AUDIT.md) for the
-preserved mathematics, explicit changes and parameter counts.
+This version evaluates **one learned, CE-selected NF4 model** on MMMLU, INCLUDE, and MGSM.
+It never benchmarks averaging, drop-first, drop-second, original FP16 or original NF4 as competing variants.
+The frozen original FP16 Qwen3 remains the teacher for Wiki-40B merger training; merged source weights come from a pre-quantized NF4 model (dequantized for differentiable merging). No teacher weights are updated.
 
-**Execution status:** implementation and local synthetic-model tests are provided.
-Pretrained training, NF4 GPU preflight, dual-T4 validation and benchmark results
-remain pending until run on Kaggle. No research scores or GPU performance numbers
-are fabricated. `outputs/REPORT.md` is an empty reporting template.
-
-## Run on Kaggle
-
-1. Upload `Qwen3Merger.ipynb`, enable **Internet**, and select **GPU T4 ×2**.
-2. Run the environment/bootstrap and configuration cells. The notebook embeds
-   every required source/test file; it needs no external repository checkout.
-   Existing Kaggle PyTorch is retained. Start a fresh kernel before installation.
-3. Run data preparation and benchmark preflight, then training. All GPU
-   correctness tests run before optimizer updates. The full training budget is
-   ten epochs with a seven-hour soft limit; validation and safe checkpoint writes
-   can exceed that limit. Training stops truthfully at the budget reached.
-4. Run ranking/export in a separate session if needed. It loads the same best
-   Wiki-40B-selected checkpoint for all levels.
-5. Run the three benchmark sections. They use both GPUs across languages. Full
-   evaluation can take much longer than training; resume it in later sessions.
-6. Generate tables, figures and the report. Save the complete output folder before
-   the Kaggle session expires. Exports and deployment NF4 files require substantial
-   disk space; check available disk before the export stage. Only the five primary
-   dense learned models and NF4 deployment models are retained. Controls are
-   reconstructed from frozen source/pair weights and temporarily serialized for
-   size measurement, avoiding roughly twenty redundant full-model exports.
-
-Source is extracted to `/kaggle/working/qwen3_merger_source`; generated experiment
-outputs go to **`/kaggle/working/Qwen3Merger/`**.
-
-## Command-line stages
-
-With the sources in the current directory, install `requirements.txt` without
-reinstalling CUDA-enabled PyTorch. Generate a config using
-`python -c "from config import Config; Config().save('config.json')"`.
+## Run on Kaggle (two T4 GPUs, Internet enabled)
 
 ```bash
+python -m pip install -r requirements.txt
 python run.py prepare --config config.json
-python run.py benchmark-preflight --config config.json
 python run.py preflight --config config.json
 python run.py train --config config.json
 python run.py rank-export --config config.json
+python run.py benchmark-preflight --config config.json
 python run.py benchmark --config config.json --benchmark MMMLU
 python run.py benchmark --config config.json --benchmark INCLUDE
 python run.py benchmark --config config.json --benchmark MGSM
 python run.py report --config config.json
 ```
 
-`--variant learned_3_fp16`, `--variant learned_3_nf4`, `original_fp16`,
-`original_nf4`, or a control name limits benchmark work to one variant. Check
-`manifests/exports.json` and `manifests/controls.json` for variant definitions. All five raw learned levels
-are evaluated in FP16 and NF4. Drop-first, drop-second, averaging and guarded
-controls are evaluated in the same dense representation as raw C.
+`rank-export` is now the single-model **CE search and NF4 selection** stage. It must finish before benchmark-preflight. There is only one export, `model_exports/selected_learned_nf4`, and only one evaluation variant, `selected_learned_nf4`.
 
-Set `evaluation_mode='full'` and rerun preparation/benchmark preflight/evaluation
-to use all eligible test questions. Full and pilot prompts/predictions are stored
-separately and reuse the training checkpoint. Other training settings must remain
-unchanged. By default, pilot evaluates up to 100 questions per language.
+### Selection: what is and is not guaranteed
 
-## Data and evaluation protocol
+The code measures CE on held-out Wiki-40B data. It ranks all 27 possible adjacent original-layer pairs, uses an exact dynamic program to find top-N **additive surrogate** combinations for every merge count from 1 through 14, and re-evaluates each shortlisted combination with actual whole-model CE. The best shortlisted models are serialized and verified in NF4 for CE and on-disk size. The combinatorial search is **not an exhaustive global optimizer** of full-model CE, because interactions between merged layers are non-additive. `max_search_pairs`, `additive_candidates_per_count`, and `nf4_verify_limit` control the search budget.
 
-- Discover Wiki-40B configs from the pinned dataset revision; default budgets are
-  12,000 / 1,024 / 1,024 Qwen tokens per language for train/validation/ranking.
-  Set the training budget to 100,000 for later experiments. No corpus substitution.
-  If the HF distribution is unavailable, install `tensorflow-datasets==4.9.8`
-  alongside Kaggle's TensorFlow and set `wiki_backend='tfds'` in a fresh run. This
-  explicitly uses official Wiki-40B 1.3.0 and disables TensorFlow GPU allocation.
-  TFDS may download complete language shards, so plan disk and preparation time.
-- Only official TRAIN articles supply optimizer, validation and ranking data.
-  A seeded global Wikidata-ID hash defines disjoint partitions across languages;
-  exact content duplicates cannot cross partitions. Unicode is retained, article
-  markers removed and documents separated by the tokenizer EOS token. Article
-  offsets and actual token counts are recorded. The final training window tail is
-  reported; no short corpus is duplicated to meet the requested budget.
-- The scheduler interleaves shuffled per-language windows without replacement.
-  Equal token budgets make training approximately balanced; scarce languages can
-  contribute fewer windows and are reported as such.
-- MMMLU: 14 translated configs, five fixed disjoint demonstrations. INCLUDE:
-  all discovered language configs, five demonstrations from validation when
-  present, otherwise a reserved test support subset. Subject-stratified selection
-  is deterministic. These support protocols are **not official benchmark scores**.
-  The checked INCLUDE release exposes 45 configs for 44 languages (Dutch and
-  Dutch-Flemish are separate configs). Both are evaluated and shown individually;
-  primary language macro-averages pool them under `nl` before averaging languages.
-- MGSM: all 11 languages, eight official translated training demonstrations, same
-  official test row indices across languages (answer sequences checked), greedy
-  generation up to 512 new tokens. Demonstrations retain their rationale and add
-  a `#### number` final-answer delimiter. The parser prefers this delimiter, then
-  a single number on the final nonempty line; ambiguity is invalid, never guessed.
-- MC scoring sums conditional log probabilities of explicit ` A`, ` B`, … label
-  token sequences appended to the cached prompt tokens. It supports multi-token
-  labels and batches candidates. MGSM generation batches examples with left padding.
-- Prompt tokens, IDs, demonstrations and protocol hashes are shared across models.
-  An over-context prompt is recorded as skipped for **all** variants; neither the
-  question nor options nor mandatory demonstrations are silently truncated.
-  Full mode attempts all eligible examples and reports any context exclusions.
-- Predictions are flushed per example. Results include accuracy, macro and
-  weighted aggregates, invalid rates, subject/domain/regional breakdowns, training
-  coverage, retention ratios and paired bootstrap intervals for per-language
-  accuracy differences. Benchmark answers never select checkpoints or pairs.
+Selection requires <=5% **perplexity increase** relative to the original FP16 teacher as a *surrogate constraint*, not a validated <=5% benchmark accuracy loss. The latter cannot be guaranteed before running the benchmark. After selecting a model, the program benchmarks only that NF4 model. Existing previous original-model benchmark predictions can be compared later only if the question IDs and prompt protocol match.
 
-## Resume and outputs
+The nominal size target is 40–50% smaller **serialized NF4 model** compared with the original serialized FP16 model. NF4 alone may already save more than 50%. When all measured candidates exceed the 50% upper reduction bound, `allow_nf4_size_overshoot=True` permits a clearly labeled, smallest-excess fallback *only if the CE surrogate holds*. Set it to false for strict 40–50% acceptance. If no measured candidate satisfies the CE surrogate, ranking stops without an export or benchmark rather than claiming success.
 
-Restore the entire output folder to the same Kaggle working path before running
-the same stage again. `latest.pt` contains merger, optimizer, AMP scaler, all GPU
-RNG states, Python/NumPy/CPU RNG, epoch/window cursor, selected microbatch and data
-signature. Checkpoints are written only at optimizer boundaries, so no unsaved
-partial gradient accumulation is resumed. `initial.pt`, `best.pt`, and `final.pt`
-are separate. Load only your own trusted checkpoint files.
+**Training distribution caveat:** The existing learner's training plans and validation still use up to five simultaneous merged pairs. Searches with 6–14 merged pairs therefore extrapolate beyond training. Deeper compression needs a separately optimized dual-T4 training schedule if these candidates are to be competitive.
 
-The run lock stores immutable Hugging Face revisions. Data/source/config mismatches
-stop execution, including stale GPT-2 checkpoints. Benchmarks hash model tensors
-and prompt protocols; changed weights cannot silently reuse previous predictions.
-One interrupted final JSONL record is discarded on resume. Raw single-pair ranking
-and whole-plan guard decisions are retained. The additive cost is a selection
-heuristic, not an assertion about jointly merged error.
+### Important artifacts
 
-Main outputs: `checkpoints/`, `logs/`, `manifests/`, `rankings/`, `model_exports/`,
-`benchmark_results/pilot/` (or `full/`), `charts/` (300-DPI PNG and vector PDF), and
-`REPORT.md`. Serialized size and parameter reduction are reported separately.
-GPU throughput describes measured execution, not a promised utilization level.
+- `rankings/single_pairs.csv`: CE of each learned single-pair replacement.
+- `rankings/whole_plan_candidates.csv`: whole-model CE before final NF4 requantization.
+- `rankings/verified_nf4_candidates.json`: actually measured CE and size for verified NF4 candidates.
+- `manifests/selection.json`: final decision, target attainment and explicit infeasibility when applicable.
+- `manifests/exports.json`: exactly one selected NF4 artifact.
+- `benchmark_results/pilot/selected_learned_nf4/`: the sole benchmark prediction group.
 
-## Tests
-
-```bash
-python -m pytest -q tests
-python tools/audit_architecture.py
-python tools/build_notebook.py
-```
-
-Synthetic CPU tests require no model downloads. CUDA-only tests skip explicitly
-when unavailable. Actual GPU checks are mandatory inside `run.py preflight` and
-the training stage. The pinned package set is tested locally with CPU PyTorch
-2.6.0; compatibility with Kaggle's CUDA/T4 environment remains a runtime check.
-The notebook does not install a CPU PyTorch wheel.
-
-Common failures: enable Internet for Hugging Face downloads; choose T4 ×2 for GPU
-count errors; use a new output directory after changing training settings; inspect
-the exact language/config in a dataset error. On OOM, measured tuning tries smaller
-batches; if none is safe, reduce sequence length explicitly in a fresh run. The
-program does not replace the merger or loss to work around a failure.
+Use a **fresh output directory**. v2 deliberately rejects old v1 training checkpoints/config locks so that previous results cannot be mistaken for the new protocol. Source-level tests and CUDA preflight remain required; pretrained training, NF4 export, and benchmarks are *not yet validated on Kaggle*.

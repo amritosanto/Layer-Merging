@@ -11,11 +11,14 @@ def test_plan_selection_against_exhaustive():
         assert compatible_selection(costs,k)==expected
 
 def test_joint_task_schedule():
+    sizes=set()
     for i in range(300):
-        plan=task_for_batch(42,0,i); assert valid_plan(plan)==plan
-        assert len(plan)==(1,1,2,3,4,5)[i%6]
-    singles=[task_for_batch(42,0,i)[0] for i in range(81) if i%6 in (0,1)]
+        plan=task_for_batch(42,0,i); assert valid_plan(plan)==plan; sizes.add(len(plan))
+        assert plan==task_for_batch(42,0,i)
+    assert sizes==set(range(1,15))
+    singles=[task_for_batch(42,0,i)[0] for i in range(0,54,2)]
     assert set(singles)==set(range(27))
+
 
 def test_unicode_and_balancing():
     assert clean_article('_START_ARTICLE_\nবাংলা_NEWLINE_日本語')=='বাংলা\n日本語'

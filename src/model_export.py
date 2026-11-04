@@ -79,3 +79,18 @@ def export_model(source,merger,tokenizer,pairs,destination,method='learned',meta
         assert reloaded.generate(ids,max_new_tokens=2,do_sample=False,pad_token_id=tok.pad_token_id).shape[1]>ids.shape[1]
         del reloaded
     return manifest
+
+
+@torch.no_grad()
+def export_best_nf4(source,merger,tokenizer,pairs,destination):
+    from .quantization import quantize_dense_nf4,load_model
+    destination=Path(destination); destination.mkdir(parents=True,exist_ok=True)
+    with torch.autocast('cuda',dtype=torch.float16),variant(source,merger,pairs):
+        final=quantize_dense_nf4(copy.deepcopy(source))
+    final.config.use_cache=True
+    final.save_pretrained(destination,safe_serialization=True); tokenizer.save_pretrained(destination)
+    expected=module_hash(final); del final
+    reloaded=load_model(str(destination),None,next(source.parameters()).device,True)
+    if module_hash(reloaded)!=expected:raise RuntimeError('Saved NF4 weights changed on reload')
+    size=sum(p.stat().st_size for p in destination.rglob('*') if p.is_file())
+    return reloaded,dict(serialized_bytes=size,weight_hash=expected,format='NF4 double quantization; embeddings, norms and lm_head FP16')

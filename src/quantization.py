@@ -59,3 +59,29 @@ def load_training_models(cfg,revision,device):
         raise RuntimeError('NF4 did not reduce measured model storage')
     del quant; gc.collect(); torch.cuda.empty_cache()
     return teacher,dense,manifest
+
+
+@torch.no_grad()
+def quantize_dense_nf4(model):
+    """Convert a private dense model in memory; never serialize FP16 candidates."""
+    import bitsandbytes as bnb
+    from transformers.quantizers.quantizer_bnb_4bit import Bnb4BitHfQuantizer
+    from transformers.utils.quantization_config import QuantizationMethod
+    count=0
+    for name,module in list(model.named_modules()):
+        if not isinstance(module,torch.nn.Linear) or name=='lm_head':continue
+        parent_name,_,child=name.rpartition('.')
+        parent=model.get_submodule(parent_name) if parent_name else model
+        device=module.weight.device
+        linear=bnb.nn.Linear4bit(module.in_features,module.out_features,bias=module.bias is not None,
+                                compute_dtype=torch.float16,compress_statistics=True,quant_type='nf4')
+        linear.weight=bnb.nn.Params4bit(module.weight.detach().cpu(),requires_grad=False,
+                                      compress_statistics=True,quant_type='nf4').to(device)
+        if module.bias is not None:linear.bias=torch.nn.Parameter(module.bias.detach().clone(),requires_grad=False)
+        setattr(parent,child,linear); count+=1
+    if not count:raise RuntimeError('No eligible NF4 linear layers')
+    config=nf4_config(); model.config.quantization_config=config
+    model.hf_quantizer=Bnb4BitHfQuantizer(config)
+    model.quantization_method=QuantizationMethod.BITS_AND_BYTES
+    model.is_quantized=True; model.is_loaded_in_4bit=True; model.is_4bit_serializable=True
+    return model.eval().requires_grad_(False)

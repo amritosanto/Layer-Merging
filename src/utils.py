@@ -39,3 +39,10 @@ def restore_rng(state):
 
 def cpu_state(model):
     return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+
+def file_digest(path):
+    h=hashlib.sha256()
+    with open(path,'rb') as stream:
+        for chunk in iter(lambda:stream.read(8*1024*1024),b''):h.update(chunk)
+    return h.hexdigest()

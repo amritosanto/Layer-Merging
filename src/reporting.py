@@ -22,7 +22,7 @@ def bootstrap_difference(a,b,seed=42,replicates=2000):
     means=np.array([delta[rng.integers(0,len(delta),len(delta))].mean() for _ in range(replicates)])
     return tuple(float(v)*100 for v in np.quantile(means,[.025,.975]))
 
-def make_report(cfg):
+def legacy_report(cfg):
     out=Path(cfg.output_dir); charts=out/'charts'; charts.mkdir(parents=True,exist_ok=True)
     rows=[]; results_dir=out/'benchmark_results'/cfg.evaluation_mode
     results_dir.mkdir(parents=True,exist_ok=True)
@@ -194,3 +194,73 @@ def make_report(cfg):
     (out/f'REPORT_{cfg.evaluation_mode}.md').write_text(report,encoding='utf-8')
     (out/'REPORT.md').write_text(report,encoding='utf-8')
     return out/'REPORT.md'
+
+
+def make_report(cfg):
+    """Summarize one CE-selected NF4 model and its paired FP16 reference."""
+    out=Path(cfg.output_dir)
+    selected=json.loads((out/'rankings/selected_plan.json').read_text())
+    manifest=json.loads((out/f'manifests/benchmark_prompts_{cfg.evaluation_mode}.json').read_text())
+    root=out/'benchmark_results'/cfg.evaluation_mode
+    records={}
+    for variant_name in ('original_fp16','best_learned_nf4'):
+        rows=[]
+        for job in manifest['jobs']:
+            path=root/variant_name/f"{job['benchmark']}_{job['language']}.jsonl"
+            loaded=read_predictions(path)
+            expected={e['id']:e for e in job['examples']}
+            if len(loaded)!=len(expected) or {r['id'] for r in loaded}!=set(expected):
+                raise RuntimeError(f'Incomplete benchmark: {path}')
+            for r in loaded:
+                e=expected[r['id']]
+                if any(r[k]!=e[k] for k in ('prompt_hash','support_ids','target','skip_reason')):
+                    raise RuntimeError('Prediction prompt/protocol mismatch')
+            rows+=loaded
+        records[variant_name]={(r['benchmark'],r['language'],r['id']):r for r in rows}
+    reference=records['original_fp16']; learned=records['best_learned_nf4']
+    if reference.keys()!=learned.keys():raise RuntimeError('Unpaired benchmark rows')
+    comparisons=[]; frequencies=[]
+    for benchmark,language in sorted({k[:2] for k in reference}):
+        keys=[k for k in reference if k[:2]==(benchmark,language) and not reference[k]['skip_reason']]
+        if not keys:raise RuntimeError(f'No scored questions: {benchmark}/{language}')
+        a=float(np.mean([reference[k]['correct'] for k in keys])); b=float(np.mean([learned[k]['correct'] for k in keys]))
+        comparisons.append(dict(benchmark=benchmark,language=language,questions=len(keys),
+                                original_accuracy=a,learned_nf4_accuracy=b,accuracy_loss_pp=100*(a-b),
+                                relative_loss_percent=100*(a-b)/a if a else None,
+                                observed_target_met=a-b<=cfg.accuracy_loss_target))
+        if benchmark!='MGSM':
+            from collections import Counter
+            for name,rows in records.items():
+                counts=Counter(rows[k]['prediction'] for k in keys)
+                for option,count in sorted(counts.items(),key=lambda x:str(x[0])):
+                    frequencies.append(dict(benchmark=benchmark,language=language,variant=name,
+                                            option=chr(65+option) if isinstance(option,int) else 'invalid',
+                                            count=count,frequency=count/len(keys)))
+    frame=pd.DataFrame(comparisons); frame.to_csv(root/'per_language_accuracy.csv',index=False)
+    pd.DataFrame(frequencies).to_csv(root/'answer_option_frequencies.csv',index=False)
+    aggregate=[]
+    for benchmark,group in frame.groupby('benchmark'):
+        a=float(group.original_accuracy.mean()); b=float(group.learned_nf4_accuracy.mean())
+        aggregate.append(dict(benchmark=benchmark,original_accuracy=a,learned_nf4_accuracy=b,
+                              accuracy_loss_pp=100*(a-b),relative_loss_percent=100*(a-b)/a if a else None,
+                              observed_target_met=a-b<=cfg.accuracy_loss_target))
+    summary=pd.DataFrame(aggregate); summary.to_csv(root/'accuracy_comparison.csv',index=False)
+    base=selected['baseline']
+    text=["# Qwen3 CE-guided merger smoke report",
+          f"Selected original-layer pairs: {[(p,p+1) for p in selected['pairs']]}; remaining layers: {selected['remaining_layers']}.",
+          f"Selection: {selected['selection']}. Measured {selected['searched_plans']} shortlisted plans; no global-optimum claim.",
+          f"Original validation CE: {base['teacher_validation']:.6f}; selected dense validation CE: {selected['validation_ce']:.6f}; final NF4 validation CE: {selected['final_nf4_validation_ce']:.6f} (increase {selected['final_nf4_ce_increase']:.6f}).",
+          f"Ranking CE: {selected['ranking_ce']:.6f}; increase over FP16 teacher: {selected['ce_increase_original']:.6f}; over dequantized NF4 source: {selected['ce_increase_source']:.6f}.",
+          f"Measured final bytes: {selected['serialized_bytes']}; original reference bytes: {base['reference_storage']['bytes']}; reduction: {100*selected['actual_reduction']:.2f}%.",
+          f"At least 40% storage target met: {selected['storage_target_met']}; preferred 40-50% range met: {selected['preferred_range_met']}. NF4 is retained even when savings exceed 50%.",
+          'Reference storage basis: '+base['reference_storage']['basis']+'.',
+          f"Training optimizer updates: {selected['training_updates']}. A zero-step run is not evidence of learned improvement.",
+          selected['format']+'. Comparison measures the combined effects of quantization and learned merging.',
+          '## Pilot benchmark comparison (macro over selected languages)',
+          summary.to_csv(index=False),
+          f"Observed five-percentage-point target met on every benchmark: {all(r['observed_target_met'] for r in aggregate)}. Negative degradation denotes improvement.",
+          'Answer-position frequencies are computed from these same predictions (answer_option_frequencies.csv).',
+          'Limitations: very small, preliminary pilot; no statistical confirmation of the accuracy target. CE is a selection proxy, not an accuracy guarantee. Estimates shortlisted plans; actual NF4 storage and CE were verified only for the chosen model. No automatic reselection using benchmark scores.',
+          'Per-language results: benchmark_results/'+cfg.evaluation_mode+'/per_language_accuracy.csv.']
+    report=out/'REPORT.md'; report.write_text('\n\n'.join(text)+'\n',encoding='utf-8')
+    return report

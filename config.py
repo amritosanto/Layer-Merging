@@ -2,13 +2,25 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
-VERSION = 'qwen3-nf4-anchored-v1'
+VERSION = 'qwen3-nf4-ce-search-v2'
 
 @dataclass
 class Config:
     output_dir: str = '/kaggle/working/Qwen3Merger'
     model_id: str = 'Qwen/Qwen3-0.6B-Base'
     model_revision: str = 'main'  # Resolved once to immutable SHA in run lock.
+    mode: str = 'standard'
+    quantization: str = 'nf4'
+    teacher_precision: str = 'fp16'
+    max_optimizer_steps: int = 0
+    min_merged_pairs: int = 1
+    max_merged_pairs: int = 14
+    max_candidate_plans: int = 12
+    max_refinement_rounds: int = 2
+    min_storage_reduction: float = 0.40
+    preferred_max_reduction: float = 0.50
+    accuracy_loss_target: float = 0.05
+    benchmark_languages: dict = None
     seed: int = 42
     epochs: int = 10
     training_hours: float = 7.0
@@ -55,6 +67,14 @@ class Config:
     bootstrap_samples: int = 2000
 
     def validate(self):
+        assert self.mode in ('smoke','standard')
+        assert self.quantization == 'nf4' and self.teacher_precision == 'fp16'
+        assert 1 <= self.min_merged_pairs <= self.max_merged_pairs <= 14
+        assert self.max_candidate_plans >= 1 and self.max_refinement_rounds >= 0
+        assert self.max_optimizer_steps >= 0
+        assert 0 < self.min_storage_reduction <= self.preferred_max_reduction < 1
+        assert 0 <= self.accuracy_loss_target <= 1
+        assert self.ce_weight == 0, 'Preserve hidden + KD + correction loss'
         assert self.merger_width % self.merger_heads == 0
         assert self.merger_blocks == 6, 'This experiment preserves six weight-attention blocks.'
         assert self.evaluation_mode in ('pilot', 'full')

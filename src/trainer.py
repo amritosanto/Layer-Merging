@@ -11,7 +11,7 @@ from torch.nn import functional as F
 from transformers import AutoTokenizer
 from huggingface_hub import HfApi
 from config import VERSION
-from .utils import atomic_json,atomic_torch,digest,module_hash,cpu_state,rng_state,restore_rng,seed_all
+from .utils import atomic_json,atomic_torch,digest,module_hash,cpu_state,rng_state,restore_rng,seed_all,file_digest
 from .quantization import load_training_models,load_model,nf4_config
 from .qwen3_adapter import inspect_model,families_from_block,teacher_states
 from .weight_patching import make_families,pack,unpack
@@ -27,18 +27,21 @@ def prepare_run(cfg):
     for folder in ('checkpoints','logs','manifests','rankings','model_exports','benchmark_results','charts'):
         (out/folder).mkdir(parents=True,exist_ok=True)
     lock_path=out/'manifests/run.json'; settings=json.loads(json.dumps(asdict(cfg)))
+    from .utils import file_digest
+    root=Path(__file__).resolve().parents[1]
+    implementation=digest({str(p.relative_to(root)):file_digest(p) for p in sorted(list((root/'src').glob('*.py'))+list((root/'benchmarks').glob('*.py'))+[root/'config.py',root/'run.py'])})
     # Benchmark protocol is locked separately, so full evaluation can reuse pilot-trained weights.
     for key in ('evaluation_mode','pilot_questions','mmmlu_few_shot','include_few_shot','mgsm_few_shot',
-                'eval_context','eval_batch_size','max_new_tokens','bootstrap_samples'):
+                'eval_context','eval_batch_size','max_new_tokens','bootstrap_samples','benchmark_languages'):
         settings.pop(key)
     if lock_path.exists():
         lock=json.loads(lock_path.read_text())
-        if lock['config']!=settings or lock['version']!=VERSION:raise RuntimeError('Incompatible run configuration; choose a fresh output_dir')
+        if lock['config']!=settings or lock['version']!=VERSION or lock.get('implementation')!=implementation:raise RuntimeError('Incompatible run configuration; choose a fresh output_dir')
         return lock
     api=HfApi()
     revisions={name:api.dataset_info(name).sha for name in ('openai/MMMLU',cfg.include_dataset,'juletxara/mgsm')}
     revisions[cfg.wiki_dataset]='tfds-wiki40b-1.3.0' if cfg.wiki_backend=='tfds' else api.dataset_info(cfg.wiki_dataset).sha
-    lock=dict(version=VERSION,config=settings,model_revision=api.model_info(cfg.model_id,revision=cfg.model_revision).sha,
+    lock=dict(version=VERSION,implementation=implementation,config=settings,model_revision=api.model_info(cfg.model_id,revision=cfg.model_revision).sha,
               dataset_revisions=revisions)
     atomic_json(lock,lock_path); return lock
 
@@ -99,6 +102,7 @@ class AnchoredExperiment:
 
     def restore(self):
         path=self.out/'checkpoints/latest.pt'
+        if not path.exists():path=self.out/'checkpoints/merger_final.pt'
         if not path.exists():return False
         saved=torch.load(path,map_location='cpu',weights_only=False)  # Only locally generated trusted checkpoints.
         if saved['signature']!=self.signature:raise RuntimeError('Checkpoint/config/data/source mismatch (GPT-2 checkpoints are incompatible)')
@@ -134,10 +138,10 @@ class AnchoredExperiment:
             direct=self.teacher.model(ids,use_cache=False).last_hidden_state
             manual=self.teacher.model.norm(teacher_states(self.teacher,ids)[-1])
             torch.testing.assert_close(direct,manual,rtol=2e-3,atol=2e-3)
-            for p in range(27):
+            for p in ((0,13,26) if cfg.mode=='smoke' else range(27)):
                 a,b=[dict(x.named_parameters()) for x in self.source.model.layers[p:p+2]]
                 for key,value in self.merger(a,b,p).items():torch.testing.assert_close(value,b[key].float(),rtol=0,atol=0)
-            for k in range(1,6):
+            for k in sorted({1,min(7,cfg.max_merged_pairs),cfg.max_merged_pairs}):
                 plan=tuple(range(0,2*k,2))
                 with variant(self.source,self.merger,plan):
                     assert len(self.source.model.layers)==28-k
@@ -165,10 +169,8 @@ class AnchoredExperiment:
             state['step'].zero_(); state['exp_avg'].zero_(); state['exp_avg_sq'].zero_()
         self.dual.sync(); del initial
         self.dual.clear(); self.integrity(); assert module_hash(self.merger)==before
-        with torch.autocast('cuda',dtype=torch.float16):
-            export_model(self.source,self.merger,self.tokenizer,(0,),self.out/'model_exports/preflight',verify=True)
-        atomic_json(dict(passed=True,patches=True,zero_correction=True,teacher_manual_match=True,gradient_flow=True,
-                         dual_gradient_sum=True,per_gpu_work=work,joint_levels=[1,2,3,4,5],identity_kl=True,export_reload=True),
+        atomic_json(dict(passed=True,patches=True,zero_correction=True,teacher_manual_match=True,
+                         gradient_flow=True,dual_gradient_sum=True,per_gpu_work=work,identity_kl=True),
                     self.out/'manifests/gpu_preflight.json')
 
     def tune_batch(self):
@@ -183,7 +185,7 @@ class AnchoredExperiment:
                 self.dual.sync()
                 for trial in range(2):
                     self.dual.clear(); started=time.monotonic()
-                    loss,_,work=self.dual.loss(batch,(0,4,8,12,16)); loss.backward(); self.dual.reduce(); self.dual.synchronize()
+                    loss,_,work=self.dual.loss(batch,tuple(range(0,2*self.cfg.max_merged_pairs,2))); loss.backward(); self.dual.reduce(); self.dual.synchronize()
                     duration=time.monotonic()-started
                     if not torch.isfinite(loss):raise FloatingPointError('Nonfinite batch probe')
                     del loss
@@ -198,7 +200,7 @@ class AnchoredExperiment:
                     with torch.cuda.device(d):torch.cuda.empty_cache()
         pd.DataFrame(rows).to_csv(self.out/'logs/batch_tuning.csv',index=False)
         safe=[r for r in rows if r['status']=='ok' and r['peak_fraction']<=self.cfg.peak_memory_fraction]
-        if not safe:raise RuntimeError('No safe five-merge batch. Reduce sequence length in a new run; inspect GPU allocations.')
+        if not safe:raise RuntimeError('No safe maximum-merge batch. Reduce sequence length in a new run; inspect GPU allocations.')
         self.state['batch_size']=max(safe,key=lambda r:(r['tokens_per_second'],r['batch']))['batch']
 
     def score(self,pairs=(),method='learned',partition='validation',model=None):
@@ -207,18 +209,14 @@ class AnchoredExperiment:
         return float(np.mean(list(per_lang.values()))),per_lang
 
     def validate(self):
-        self.merger.eval(); path=self.out/'rankings/validation_drop.json'
-        baselines=json.loads(path.read_text()) if path.exists() else {}
-        levels={k:[] for k in range(1,6)}
-        for plan in checkpoint_plans():
-            key=','.join(map(str,plan))
-            if key not in baselines:
-                baselines[key]=self.score(plan,'drop_first')[0]; atomic_json(baselines,path)
-            score,_=self.score(plan); levels[len(plan)].append(score-baselines[key])
-        row=dict(step=self.state['step'],epoch=self.state['epoch'],**{f'level_{k}_ce_gap':float(np.mean(v)) for k,v in levels.items()})
-        row['selection_ce_gap']=float(np.mean([np.mean(v) for v in levels.values()])); self.validation.append(row)
-        if self.state['best'] is None or row['selection_ce_gap']<self.state['best']:
-            self.state['best']=row['selection_ce_gap']; self.snapshot('best')
+        self.merger.eval()
+        teacher=self.score(model=self.teacher)[0]
+        # One deterministic representative plan, not a sweep over all levels.
+        plan=tuple(range(0,2*min(3,self.cfg.max_merged_pairs),2))
+        ce=self.score(plan)[0]
+        row=dict(step=self.state['step'],epoch=self.state['epoch'],teacher_ce=teacher,
+                 validation_ce=ce,selection_ce_gap=ce-teacher)
+        self.validation.append(row); self.state['best']=ce
         self.merger.train(); print('Validation:',row,flush=True)
 
     def train(self):
@@ -226,7 +224,7 @@ class AnchoredExperiment:
         if (self.out/'manifests/training_complete.json').exists():return
         started=time.monotonic(); base=self.state['seconds']
         try:
-            if not resumed:self.snapshot('initial'); self.preflight()
+            if not (self.out/'manifests/gpu_preflight.json').exists():self.preflight()
             self.tune_batch()
             if not self.validation:self.validate()
             self.state['last_validation']=base+time.monotonic()-started
@@ -234,10 +232,10 @@ class AnchoredExperiment:
                 windows=balanced_epoch(self.data,self.cfg.train_seq_len,self.cfg.seed,self.state['epoch'])
                 while self.state['cursor']<len(windows):
                     elapsed=base+time.monotonic()-started
-                    if elapsed>=self.cfg.training_hours*3600:break
+                    if elapsed>=self.cfg.training_hours*3600 or (self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps):break
                     step_start=time.monotonic(); cursor=self.state['cursor']; bs=self.state['batch_size']
                     stop=min(cursor+bs*self.cfg.gradient_accumulation,len(windows))
-                    plan=task_for_batch(self.cfg.seed,self.state['epoch'],cursor//(bs*self.cfg.gradient_accumulation))
+                    plan=task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs)
                     self.dual.sync(); self.dual.clear(); totals={}; work_total=[0]*len(self.dual.workers)
                     for d in range(len(work_total)):torch.cuda.reset_peak_memory_stats(d)
                     for begin in range(cursor,stop,bs):
@@ -267,70 +265,16 @@ class AnchoredExperiment:
                 self.state['epoch']+=1; self.state['cursor']=0; self.validate(); self.save()
             if self.validation[-1]['step']!=self.state['step']:self.validate()
             self.state['seconds']=base+time.monotonic()-started
-            self.snapshot('final'); self.integrity()
-            atomic_json(dict(state=self.state,stop_reason='epochs' if self.state['epoch']==self.cfg.epochs else 'time_budget',
-                             integrity_passed=True),self.out/'manifests/training_complete.json')
+            self.integrity()
+            self.save()
+            (self.out/'checkpoints/latest.pt').replace(self.out/'checkpoints/merger_final.pt')
+            atomic_json(dict(state=self.state,metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
+            atomic_json(dict(state=self.state,signature=self.signature,stop_reason=('steps' if self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps else 'epochs' if self.state['epoch']==self.cfg.epochs else 'time_budget'),
+                             checkpoint_sha256=file_digest(self.out/'checkpoints/merger_final.pt'),integrity_passed=True),self.out/'manifests/training_complete.json')
         finally:
-            self.state['seconds']=base+time.monotonic()-started; self.dual.clear(); self.save()
+            self.state['seconds']=base+time.monotonic()-started; self.dual.clear()
+            if not (self.out/'manifests/training_complete.json').exists():self.save()
 
     def rank_and_export(self):
-        if not (self.out/'manifests/training_complete.json').exists():raise RuntimeError('Finish the training stage before ranking/export')
-        saved=torch.load(self.out/'checkpoints/best.pt',map_location='cpu',weights_only=False)
-        if saved['signature']!=self.signature:raise RuntimeError('Best checkpoint mismatch')
-        self.merger.load_state_dict(saved['merger']); self.merger.eval()
-        if saved['state']['step']==0:
-            print('Best checkpoint is the zero-correction initialization. Do not report learned improvement.',flush=True)
-        cache_path=self.out/'rankings/cache.json'; cache=json.loads(cache_path.read_text()) if cache_path.exists() else {}
-        checkpoint_hash=module_hash(self.merger); diagnostic_rows={}
-        def score(plan,method):
-            key=digest([self.signature,checkpoint_hash,list(plan),method])
-            if key not in cache:cache[key]=self.score(plan,method,'ranking'); atomic_json(cache,cache_path)
-            for language,ce in cache[key][1].items():
-                diagnostic_rows[(str(plan),method,language)]=dict(pairs=str(plan),method=method,language=language,ce=ce,ppl=math.exp(ce))
-            return cache[key][0]
-        baseline=score((),'learned'); rows=[]
-        for p in range(27):
-            learned=score((p,),'learned'); drop=score((p,),'drop_first')
-            accepted=learned<=drop-self.cfg.accept_margin_ce
-            rows.append(dict(pair=p,learned_ce=learned,learned_ppl=math.exp(learned),drop_first_ce=drop,drop_first_ppl=math.exp(drop),accepted=accepted,
-                             raw_cost=100*math.expm1(learned-baseline),guarded_cost=100*math.expm1((learned if accepted else drop)-baseline)))
-        pd.DataFrame(rows).to_csv(self.out/'rankings/single_pairs.csv',index=False)
-        plans={}; exports=[]; controls=[]
-        with torch.no_grad(),torch.autocast('cuda',dtype=torch.float16):
-            generated={}
-            for p in range(27):
-                a,b=[dict(x.named_parameters()) for x in self.source.model.layers[p:p+2]]
-                generated[p]={k:v.detach().half().cpu() for k,v in self.merger(a,b,p).items()}
-            atomic_torch(dict(checkpoint_hash=checkpoint_hash,pairs=generated),self.out/'checkpoints/generated_pairs.pt')
-            del generated
-        # Raw plans are primary. Reference-style guarded additive plans are a separately labelled control.
-        for selection in ('raw','guarded'):
-            costs=[r['raw_cost' if selection=='raw' else 'guarded_cost'] for r in rows]
-            for k in range(1,6):
-                pairs=compatible_selection(costs,k); learned=score(pairs,'learned'); drop=score(pairs,'drop_first')
-                accepted=learned<=drop-self.cfg.accept_margin_ce
-                key=f'{selection}_{k}'; plans[key]=dict(pairs=list(pairs),learned_ce=learned,drop_first_ce=drop,accepted=accepted,
-                                                      additive_cost=sum(costs[p] for p in pairs))
-                methods=('learned','drop_first','drop_second','average') if selection=='raw' else ('learned' if accepted else 'drop_first',)
-                for method in methods:
-                    label=f'{method}_{k}' if selection=='raw' else f'guarded_{k}'
-                    if selection!='raw' or method!='learned':
-                        controls.append(dict(name=label+'_fp16',path=self.cfg.model_id,revision=self.lock['model_revision'],nf4=False,
-                                             layers=28-k,control=True,method=method,pairs=list(pairs)))
-                        continue
-                    destination=self.out/'model_exports'/label
-                    with torch.autocast('cuda',dtype=torch.float16):
-                        info=export_model(self.source,self.merger,self.tokenizer,pairs,destination,method,
-                                          dict(selection=selection,accepted=accepted,selected_step=saved['state']['step']))
-                    exports.append(dict(name=label,path=str(destination),**info))
-                atomic_json(plans,self.out/'rankings/plans.json')
-                atomic_json(exports,self.out/'manifests/exports.json')
-                atomic_json(controls,self.out/'manifests/controls.json')
-        quant=load_model(self.cfg.model_id,self.lock['model_revision'],'cuda:0',True)
-        qce={lang:score_tokens(quant,d['ranking'],self.cfg) for lang,d in self.data.items()}; del quant
-        tce={lang:score_tokens(self.teacher,d['ranking'],self.cfg) for lang,d in self.data.items()}
-        for method,values in [('original_fp16',tce),('original_nf4',qce)]:
-            for language,ce in values.items():diagnostic_rows[('',method,language)]=dict(pairs='',method=method,language=language,ce=ce,ppl=math.exp(ce))
-        pd.DataFrame(diagnostic_rows.values()).to_csv(self.out/'logs/wiki_ranking_diagnostics.csv',index=False)
-        atomic_json(dict(nf4_ce=qce,teacher_ce=tce,dequantized_source_ce=baseline,checkpoint_hash=checkpoint_hash),self.out/'rankings/baselines.json')
-        self.integrity()
+        from .ce_search import search_and_export
+        return search_and_export(self)

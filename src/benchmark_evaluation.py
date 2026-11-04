@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from datasets import get_dataset_config_names,load_dataset
 from transformers import AutoTokenizer
+from huggingface_hub import HfApi
 from benchmarks import mmmlu,include,mgsm
 from .utils import atomic_json,digest
 from .quantization import load_model,dequantized_copy,MODEL_LOAD_LOCK
@@ -33,12 +34,13 @@ def mc_prompt(support,target):
 
 def prepare_benchmarks(cfg,lock,tokenizer):
     path=Path(cfg.output_dir)/f'manifests/benchmark_prompts_{cfg.evaluation_mode}.json'
-    protocol=dict(mode=cfg.evaluation_mode,pilot=cfg.pilot_questions,seed=cfg.seed,
+    protocol=dict(language_subset=cfg.benchmark_languages,experiment_mode=cfg.mode,mode=cfg.evaluation_mode,pilot=cfg.pilot_questions,seed=cfg.seed,
                   shots=[cfg.mmmlu_few_shot,cfg.include_few_shot,cfg.mgsm_few_shot],context=cfg.eval_context,
                   max_new_tokens=cfg.max_new_tokens,model_revision=lock['model_revision'],revisions=lock['dataset_revisions'],
                   version='fewshot-label-likelihood-v1',overflow='skip identical IDs for every variant; never truncate',
                   mc_support='fixed stratified disjoint test support when no validation split; non-official protocol',
                   mgsm_alignment='same official row indices across languages; verify answer_number sequence')
+    protocol=json.loads(json.dumps(protocol))
     if path.exists():
         result=json.loads(path.read_text(encoding='utf-8'))
         if result['protocol']!=protocol:raise RuntimeError('Benchmark protocol changed; refuse stale predictions')
@@ -51,6 +53,21 @@ def prepare_benchmarks(cfg,lock,tokenizer):
     for benchmark,dataset,configs,shots,adapter in specifications:
         revision=lock['dataset_revisions'][dataset]
         if configs is None:configs=[c for c in get_dataset_config_names(dataset,revision=revision) if c not in ('default','all')]
+        if benchmark=='INCLUDE':
+            files=HfApi().list_repo_files(dataset,repo_type='dataset',revision=revision)
+            published={p.split('/')[0] for p in files if '/test-' in p and p.endswith('.parquet')}
+            missing=set(configs)-published
+            if missing-{'Dutch-Flemish'}:raise RuntimeError(f'Unexpected missing INCLUDE files: {missing}')
+            configs=[c for c in configs if c in published]
+        if (cfg.mode=='smoke' and cfg.evaluation_mode=='pilot') or cfg.benchmark_languages:
+            requested=(cfg.benchmark_languages or {}).get(benchmark,[])
+            chosen=[c for c in requested if c in configs]
+            if cfg.mode=='smoke' and cfg.evaluation_mode=='pilot':
+                chosen+=sorted(set(configs)-set(chosen))[:max(0,3-len(chosen))]
+                configs=chosen[:3]
+            elif requested:
+                if len(chosen)!=len(requested):raise ValueError(f'Unavailable {benchmark} languages')
+                configs=chosen
         for language in configs:
             ds=load_dataset(dataset,language,revision=revision)
             if benchmark=='MGSM':
@@ -135,14 +152,13 @@ def generate_answers(model,tokenizer,examples,device,cfg,language):
     return results
 
 def variants(cfg,lock):
-    out=Path(cfg.output_dir); entries=[dict(name='original_fp16',path=cfg.model_id,revision=lock['model_revision'],nf4=False,layers=28),
-                                     dict(name='original_nf4',path=cfg.model_id,revision=lock['model_revision'],nf4=True,layers=28)]
-    for item in json.loads((out/'manifests/exports.json').read_text()):
-        entries.append(dict(name=item['name']+'_fp16',path=item['path'],revision=None,nf4=False,layers=item['layers']))
-        if item['name'].startswith('learned_'):
-            entries.append(dict(name=item['name']+'_nf4',path=item['path'],revision=None,nf4=True,layers=item['layers']))
-    entries.extend(json.loads((out/'manifests/controls.json').read_text()))
-    return entries
+    out=Path(cfg.output_dir)
+    final=json.loads((out/'manifests/final_export.json').read_text())
+    from .utils import file_digest
+    if any(not (out/rel).is_file() or file_digest(out/rel)!=sha for rel,sha in final['files'].items()):
+        raise RuntimeError('Final export integrity check failed')
+    return [dict(name='original_fp16',path=cfg.model_id,revision=lock['model_revision'],nf4=False,layers=28),
+            dict(name='best_learned_nf4',path=str(out/'model_exports/best_learned_nf4'),revision=None,nf4=True,layers=final['remaining_layers'])]
 
 def read_predictions(path):
     if not path.exists():return []
@@ -179,9 +195,6 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         from .utils import module_hash
         weight_hash=module_hash(model)
         identity=digest([manifest['signature'],variant_spec,weight_hash,'smoke' if smoke else 'evaluation'])
-        if rank==0 and variant_spec['nf4']:
-            target=out/'model_exports'/('deployment_'+name)
-            model.save_pretrained(target,safe_serialization=True); tok.save_pretrained(target)
         torch.cuda.reset_peak_memory_stats(rank); start=time.monotonic(); input_tokens=output_tokens=0
         root=out/('preflight_predictions' if smoke else 'benchmark_results')/cfg.evaluation_mode/name; root.mkdir(parents=True,exist_ok=True)
         for job in jobs[rank::needed]:
@@ -217,19 +230,10 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         with MODEL_LOAD_LOCK, torch.device('meta'):
             dense=AutoModelForCausalLM.from_config(dense_config)
         stats['parameters']=sum(p.numel() for p in dense.parameters()); del dense
-        measured_control_bytes=None
-        if variant_spec.get('control') and rank==0:
-            with tempfile.TemporaryDirectory(prefix='control_size_',dir=out/'model_exports') as temporary:
-                model.save_pretrained(temporary,safe_serialization=True); tok.save_pretrained(temporary)
-                measured_control_bytes=sum(p.stat().st_size for p in Path(temporary).rglob('*') if p.is_file())
-        if variant_spec.get('control'):size_path=None
-        elif variant_spec['nf4']:size_path=out/'model_exports'/('deployment_'+name)
-        elif Path(variant_spec['path']).is_dir():size_path=Path(variant_spec['path'])
-        else:
-            # Save reference to measure actual deployment storage using the same serialization.
-            size_path=out/'model_exports/reference_fp16'
-            if rank==0:model.save_pretrained(size_path,safe_serialization=True); tok.save_pretrained(size_path)
-        if rank==0:stats['stored_bytes']=measured_control_bytes if measured_control_bytes is not None else sum(p.stat().st_size for p in size_path.rglob('*') if p.is_file())
+        final=json.loads((out/'manifests/final_export.json').read_text())
+        if rank==0:
+            stats['stored_bytes']=(final['baseline']['reference_storage']['bytes'] if name=='original_fp16'
+                                   else final['serialized_bytes'])
         stat_path=root/f'performance_gpu{rank}_{"-".join(sorted({j["benchmark"] for j in jobs}))}.json'
         if stat_path.exists():
             old=json.loads(stat_path.read_text())

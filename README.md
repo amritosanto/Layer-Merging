@@ -1,3 +1,36 @@
+# Optimized CE-guided Qwen3 smoke experiment
+
+Run on Kaggle with Internet and **T4 x2** using `Qwen3_Merger_Optimized_Kaggle.ipynb`.
+The notebook clones this repository, preserves Kaggle CUDA PyTorch, and installs binary wheels compatible with Python 3.13. Do not install the historical requirements.txt on Python 3.13; use the launcher dependency cell.
+
+```bash
+python run.py smoke --config config.smoke.json
+# Independent resumable stages:
+python run.py train --config config.smoke.json
+python run.py rank-export --config config.smoke.json
+python run.py benchmark --config config.smoke.json
+python run.py report --config config.smoke.json
+```
+
+Defaults: one epoch, at most 30 updates, 0.5-hour training budget (preflight/search/benchmarks add overhead), 128-token windows and three discovered Wiki-40B languages. It retains the six-block, width-384, six-head merger and unchanged hidden/KD/correction objective. The teacher is frozen original FP16. Source weights are quantized NF4 before dense differentiable merging.
+
+Selection scans 27 pairs on a separate held-out ranking partition, then uses DP across 1–14 compatible pairs and bounded local swaps. At most 12 whole-plan candidates are shortlisted, including refinements. Actual whole-model ranking CE determines the choice, preferring estimated 40–50% size savings, then >=40%; if infeasible the report explicitly records the unmet target. This is the best plan found within a budget, not a global optimum. Candidate CE uses the dense representation of NF4-source weights; final NF4 CE is measured separately. No benchmark score selects a plan.
+
+Only `best_learned_nf4` is exported and compared against `original_fp16` (three language configs and five questions each in smoke mode). Cached predictions are reused only with matching weights and frozen prompts/protocol. No deletion/average/original-NF4 benchmark matrix is run. The comparison includes both quantization and merging effects. Answer-option frequencies reuse those predictions. A five-percentage-point target is an observed pilot outcome, not statistical confirmation.
+
+To evaluate all languages later copy the same configuration, set `benchmark_languages=null` and `evaluation_mode="full"`, then run benchmark and report against the same output directory. Training settings must remain unchanged; full predictions use a separate namespace. For fuller training, choose a fresh output directory and raise the step/time/data budgets explicitly.
+
+Resume by re-running the same stages with the same configuration and output directory. Code/config/data/checkpoint fingerprints must match. Use a fresh output directory after changing experimental settings or code. A completed training checkpoint is not retrained; valid CE caches and completed predictions are reused. Partial exports without a completion manifest are rewritten by the export stage. Keep the entire output directory for resume, including manifests and the small Wiki token cache. Interrupted training retains a resumable latest checkpoint; completed training retains merger_final.pt.
+
+Artifacts: `rankings/{single_pair_ce.csv,candidate_plans.csv,selected_plan.json}`, `model_exports/best_learned_nf4`, `benchmark_results/pilot/{original_fp16,best_learned_nf4}`, CSV comparisons, training metrics, and `REPORT.md`. Prediction subdirectories retain the existing variant-based layout for compatibility. Model checkpoints and datasets must not be committed.
+
+Final export bytes are measured including tokenizer/config/quantization metadata. Original reference bytes come from the pinned published 16-bit checkpoint and its tokenizer/config files; FP16 has the same tensor byte width. Candidate NF4 estimates include unchanged FP16 embeddings/norms/head and double-quantization scales, but are approximate. A final storage miss is reported without benchmarking another plan. NF4-only savings above 50% are not reversed.
+
+Local checks use small synthetic models; full pretrained NF4 export and dual-T4 smoke execution remain unverified until run on Kaggle. No pretrained training or benchmark results are claimed here.
+
+---
+## Historical implementation notes (superseded defaults)
+
 # Qwen3 multilingual learned layer merger
 
 An executable port of the supplied GPT-2 second-block-anchored merger to

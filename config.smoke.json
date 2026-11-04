@@ -1,0 +1,40 @@
+{
+  "mode": "smoke",
+  "output_dir": "/kaggle/working/outputs/smoke",
+  "epochs": 1,
+  "max_optimizer_steps": 30,
+  "training_hours": 0.5,
+  "train_seq_len": 128,
+  "train_tokens_per_language": 2048,
+  "validation_tokens_per_language": 256,
+  "ranking_tokens_per_language": 512,
+  "max_global_batch_size": 4,
+  "gradient_accumulation": 1,
+  "min_merged_pairs": 1,
+  "max_merged_pairs": 14,
+  "max_candidate_plans": 12,
+  "max_refinement_rounds": 2,
+  "evaluation_mode": "pilot",
+  "pilot_questions": 5,
+  "max_new_tokens": 128,
+  "seed": 42,
+  "validation_interval_minutes": 60,
+  "save_every_steps": 10,
+  "benchmark_languages": {
+    "MMMLU": [
+      "EN_US",
+      "HI_IN",
+      "JA_JP"
+    ],
+    "INCLUDE": [
+      "English",
+      "Hindi",
+      "Japanese"
+    ],
+    "MGSM": [
+      "en",
+      "bn",
+      "ja"
+    ]
+  }
+}

@@ -23,6 +23,8 @@ def prepare_data(cfg,tokenizer,revision):
                   budgets=[cfg.train_tokens_per_language,cfg.validation_tokens_per_language,cfg.ranking_tokens_per_language],
                   tokenizer=tokenizer.name_or_path,seq_len=cfg.train_seq_len,buffer=cfg.wiki_shuffle_buffer,
                   max_articles=cfg.max_articles_per_language,eos=tokenizer.eos_token_id)
+    import json
+    settings=json.loads(json.dumps(settings))
     if path.exists() and cache.exists():
         import json
         manifest=json.loads(path.read_text(encoding='utf-8'))
@@ -35,6 +37,9 @@ def prepare_data(cfg,tokenizer,revision):
         configs=tfds_configs()
     else:configs=get_dataset_config_names(cfg.wiki_dataset,revision=revision)
     languages=list(cfg.wiki_languages) or [x for x in configs if x not in ('all','default')]
+    if cfg.mode=='smoke' and not cfg.wiki_languages:
+        languages=[x for x in ('en','hi','ja') if x in configs]
+        languages+=(sorted(set(configs)-set(languages)-{'all','default'}))[:3-len(languages)]
     if not languages:raise RuntimeError('No Wiki-40B language configs discovered')
     data={}; records={}; missing={}; content_owner={}
     budgets=dict(zip(('train','validation','ranking'),settings['budgets']))

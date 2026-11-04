@@ -1,8 +1,14 @@
 import copy
 import gc
+from threading import RLock
 import torch
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 from .utils import module_hash, tensor_hash
+
+# Transformers/Accelerate temporarily patch process-global initialization state.
+# All model construction in benchmark threads must share this lock; inference
+# itself remains parallel across devices.
+MODEL_LOAD_LOCK = RLock()
 
 def nf4_config():
     return BitsAndBytesConfig(load_in_4bit=True,bnb_4bit_quant_type='nf4',
@@ -11,7 +17,8 @@ def nf4_config():
 def load_model(model_id, revision, device, quantized=False):
     kwargs=dict(revision=revision,torch_dtype=torch.float16,attn_implementation='sdpa',device_map={'':str(device)})
     if quantized: kwargs['quantization_config']=nf4_config()
-    return AutoModelForCausalLM.from_pretrained(model_id,**kwargs).eval().requires_grad_(False)
+    with MODEL_LOAD_LOCK:
+        return AutoModelForCausalLM.from_pretrained(model_id,**kwargs).eval().requires_grad_(False)
 
 @torch.no_grad()
 def dequantized_copy(quantized, device):
@@ -21,7 +28,8 @@ def dequantized_copy(quantized, device):
     if hasattr(config,'quantization_config'): del config.quantization_config
     config._attn_implementation='sdpa'
     # CPU construction avoids holding a second initialization on the GPU.
-    dense=AutoModelForCausalLM.from_config(config).half().to(device)
+    with MODEL_LOAD_LOCK:
+        dense=AutoModelForCausalLM.from_config(config).half().to(device)
     quant_count=0; hashes={}
     originals=dict(quantized.named_parameters())
     for name,target in dense.named_parameters():

@@ -25,7 +25,11 @@ def dequantized_copy(quantized, device):
     """Materialize only tensors actually read from NF4 storage, including unchanged embeddings/norms."""
     import bitsandbytes as bnb
     config=copy.deepcopy(quantized.config)
-    if hasattr(config,'quantization_config'): del config.quantization_config
+    # The new model stores dense FP16 tensors, so neither NF4 settings nor its
+    # runtime dtype marker belongs in its config. The latter is a torch.dtype
+    # that Transformers 4.51 cannot serialize in save_pretrained.
+    for name in ('quantization_config','_pre_quantization_dtype'):
+        if hasattr(config,name): delattr(config,name)
     config._attn_implementation='sdpa'
     # CPU construction avoids holding a second initialization on the GPU.
     with MODEL_LOAD_LOCK:

@@ -1,4 +1,5 @@
 import inspect
+import json
 import torch
 from torch.func import functional_call
 
@@ -14,6 +15,13 @@ def families_from_block(block):
 
 def block_parameters(families): return dict(families)
 
+def _config_json_default(value):
+    # Transformers converts torch_dtype, but leaves _pre_quantization_dtype
+    # as a torch.dtype after NF4 loading and dequantized_copy.
+    if isinstance(value, torch.dtype):
+        return str(value).removeprefix('torch.')
+    raise TypeError(f'Object of type {type(value).__name__} is not JSON serializable')
+
 def inspect_model(model, strict=True):
     c = model.config
     if c.model_type != 'qwen3': raise ValueError('Expected dense Qwen3')
@@ -27,7 +35,8 @@ def inspect_model(model, strict=True):
         assert {k:list(v.shape) for k,v in families_from_block(layer).items()} == shapes
     signature = str(inspect.signature(model.model.layers[0].forward))
     if 'position_embeddings' not in signature: raise RuntimeError('Unsupported Qwen3 decoder API')
-    return dict(config=c.to_dict(), shapes=shapes, decoder_signature=signature)
+    config = json.loads(json.dumps(c.to_dict(), default=_config_json_default, allow_nan=False))
+    return dict(config=config, shapes=shapes, decoder_signature=signature)
 
 def layer_context(model, h):
     length = h.shape[1]

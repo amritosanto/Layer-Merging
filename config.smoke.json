@@ -1,13 +1,13 @@
 {
   "mode": "smoke",
-  "output_dir": "/kaggle/working/outputs/smoke",
-  "epochs": 1,
-  "max_optimizer_steps": 30,
-  "training_hours": 0.5,
+  "output_dir": "/kaggle/working/outputs/smoke_5epoch_multilingual_nf4",
+  "epochs": 5,
+  "max_optimizer_steps": 0,
+  "training_hours": 0,
   "train_seq_len": 128,
-  "train_tokens_per_language": 2048,
+  "train_tokens_per_language": 512,
   "validation_tokens_per_language": 256,
-  "ranking_tokens_per_language": 512,
+  "ranking_tokens_per_language": 256,
   "max_global_batch_size": 4,
   "gradient_accumulation": 1,
   "min_merged_pairs": 1,
@@ -15,7 +15,7 @@
   "max_candidate_plans": 12,
   "max_refinement_rounds": 2,
   "evaluation_mode": "pilot",
-  "pilot_questions": 5,
+  "pilot_questions": 10,
   "max_new_tokens": 128,
   "seed": 42,
   "validation_interval_minutes": 60,
@@ -36,5 +36,18 @@
       "bn",
       "ja"
     ]
-  }
+  },
+  "mgsm_max_new_tokens": 256,
+  "max_final_nf4_candidates": 3,
+  "min_storage_reduction": 0.4,
+  "target_storage_reduction": 0.5,
+  "training_languages": [
+    "English",
+    "Hindi",
+    "Japanese",
+    "Bengali",
+    "Swahili",
+    "Yoruba",
+    "Telugu"
+  ]
 }

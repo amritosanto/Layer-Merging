@@ -25,15 +25,25 @@ def normalized_number(text,language='en'):
         return str(value)
     except (ValueError,InvalidOperation,ZeroDivisionError):return None
 
-def extract_answer(text,language='en'):
-    # Prefer the explicit demonstration delimiter; otherwise inspect only the last nonempty line.
+def extract_answer(text,language='en',complete=True):
+    # Stop at any subsequent question, including translated question prefixes.
+    questions='|'.join(re.escape(q) for q,_ in PREFIXES.values())
+    boundary=re.search(r'(?im)^\s*(?:'+questions+r')\s*[:：]',text)
+    if boundary:text=text[:boundary.start()]
+    matches=list(re.finditer(r'####[ \t]*([^\r\n]*)',text))
+    for match in matches:
+        if match.end()==len(text) and not complete and boundary is None:continue
+        value=match.group(1).strip()
+        if re.fullmatch(r'[-+−]?\d+(?:[.,٫٬\u00a0\u202f]\d+)*(?:/\d+)?[.!]?',value):
+            answer=normalized_number(value.rstrip('.!'),language)
+            if answer is not None:return answer
+    if matches or not complete or boundary:return None
     lines=[line.strip() for line in text.splitlines() if line.strip()]
     if not lines:return None
-    tail=text.rsplit('####',1)[-1].strip().splitlines()[0] if '####' in text else lines[-1]
-    tail=re.sub(r'(?<=\d) (?=\d{3}(?:\D|$))','',tail)
-    candidates=re.findall(r'[-+−]?\d+(?:[.,٫٬\u00a0\u202f]\d+)*(?:/\d+)?',tail)
-    if len(candidates)!=1:return None
-    return normalized_number(candidates[0],language)
+    tail=lines[-1]
+    if not re.fullmatch(r'[-+−]?\d+(?:[.,٫٬\u00a0\u202f]\d+)*(?:/\d+)?[.!]?',tail):return None
+    return normalized_number(tail.rstrip('.!'),language)
+
 
 def prompt(support,question,language):
     q,a=PREFIXES[language]

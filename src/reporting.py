@@ -197,13 +197,13 @@ def legacy_report(cfg):
 
 
 def make_report(cfg):
-    """Summarize one CE-selected NF4 model and its paired FP16 reference."""
+    """Summarize one CE-selected NF4 model and its paired NF4 reference."""
     out=Path(cfg.output_dir)
     selected=json.loads((out/'rankings/selected_plan.json').read_text())
     manifest=json.loads((out/f'manifests/benchmark_prompts_{cfg.evaluation_mode}.json').read_text())
     root=out/'benchmark_results'/cfg.evaluation_mode
     records={}
-    for variant_name in ('original_fp16','best_learned_nf4'):
+    for variant_name in ('original_nf4','best_learned_nf4'):
         rows=[]
         for job in manifest['jobs']:
             path=root/variant_name/f"{job['benchmark']}_{job['language']}.jsonl"
@@ -217,7 +217,7 @@ def make_report(cfg):
                     raise RuntimeError('Prediction prompt/protocol mismatch')
             rows+=loaded
         records[variant_name]={(r['benchmark'],r['language'],r['id']):r for r in rows}
-    reference=records['original_fp16']; learned=records['best_learned_nf4']
+    reference=records['original_nf4']; learned=records['best_learned_nf4']
     if reference.keys()!=learned.keys():raise RuntimeError('Unpaired benchmark rows')
     comparisons=[]; frequencies=[]
     for benchmark,language in sorted({k[:2] for k in reference}):
@@ -225,7 +225,10 @@ def make_report(cfg):
         if not keys:raise RuntimeError(f'No scored questions: {benchmark}/{language}')
         a=float(np.mean([reference[k]['correct'] for k in keys])); b=float(np.mean([learned[k]['correct'] for k in keys]))
         comparisons.append(dict(benchmark=benchmark,language=language,questions=len(keys),
-                                original_accuracy=a,learned_nf4_accuracy=b,accuracy_loss_pp=100*(a-b),
+                                original_nf4_correct=sum(reference[k]['correct'] for k in keys),learned_nf4_correct=sum(learned[k]['correct'] for k in keys),
+                                original_invalid=sum(reference[k]['invalid'] for k in keys),learned_invalid=sum(learned[k]['invalid'] for k in keys),
+                                original_truncated=sum(reference[k].get('truncated',False) for k in keys),learned_truncated=sum(learned[k].get('truncated',False) for k in keys),
+                                original_nf4_accuracy=a,learned_nf4_accuracy=b,accuracy_loss_pp=100*(a-b),
                                 relative_loss_percent=100*(a-b)/a if a else None,
                                 observed_target_met=a-b<=cfg.accuracy_loss_target))
         if benchmark!='MGSM':
@@ -240,27 +243,31 @@ def make_report(cfg):
     pd.DataFrame(frequencies).to_csv(root/'answer_option_frequencies.csv',index=False)
     aggregate=[]
     for benchmark,group in frame.groupby('benchmark'):
-        a=float(group.original_accuracy.mean()); b=float(group.learned_nf4_accuracy.mean())
-        aggregate.append(dict(benchmark=benchmark,original_accuracy=a,learned_nf4_accuracy=b,
+        a=float(group.original_nf4_accuracy.mean()); b=float(group.learned_nf4_accuracy.mean())
+        aggregate.append(dict(benchmark=benchmark,original_nf4_accuracy=a,learned_nf4_accuracy=b,
                               accuracy_loss_pp=100*(a-b),relative_loss_percent=100*(a-b)/a if a else None,
                               observed_target_met=a-b<=cfg.accuracy_loss_target))
     summary=pd.DataFrame(aggregate); summary.to_csv(root/'accuracy_comparison.csv',index=False)
     base=selected['baseline']
-    text=["# Qwen3 CE-guided merger smoke report",
+    training=json.loads((out/'logs/training_metrics.json').read_text())
+    coverage=json.loads((out/'manifests/language_coverage.json').read_text())
+    sampled=[r for r in coverage if r['sampled']]
+    text=["# Five-epoch multilingual Qwen3 NF4 comparison",
+          f"Completed epochs: {selected['completed_epochs']}; optimizer updates: {selected['training_updates']}; training seconds: {training['state']['seconds']:.2f}.",
+          f"Actual processed training tokens by language: {training['actual_training_tokens_per_language']}. Loss, teacher/student CE, distillation and correction metrics: logs/training_metrics.json.",
+          f"Sampled sources: {[(r['language'],r['source'],r['config']) for r in sampled]}. Availability and exact/proxy/unavailable status for the official 119 entries (plus requested Yoruba) are in manifests/language_coverage.json. Availability is not a claim that all languages were trained.",
           f"Selected original-layer pairs: {[(p,p+1) for p in selected['pairs']]}; remaining layers: {selected['remaining_layers']}.",
-          f"Selection: {selected['selection']}. Measured {selected['searched_plans']} shortlisted plans; no global-optimum claim.",
-          f"Original validation CE: {base['teacher_validation']:.6f}; selected dense validation CE: {selected['validation_ce']:.6f}; final NF4 validation CE: {selected['final_nf4_validation_ce']:.6f} (increase {selected['final_nf4_ce_increase']:.6f}).",
-          f"Ranking CE: {selected['ranking_ce']:.6f}; increase over FP16 teacher: {selected['ce_increase_original']:.6f}; over dequantized NF4 source: {selected['ce_increase_source']:.6f}.",
-          f"Measured final bytes: {selected['serialized_bytes']}; original reference bytes: {base['reference_storage']['bytes']}; reduction: {100*selected['actual_reduction']:.2f}%.",
-          f"At least 40% storage target met: {selected['storage_target_met']}; preferred 40-50% range met: {selected['preferred_range_met']}. NF4 is retained even when savings exceed 50%.",
-          'Reference storage basis: '+base['reference_storage']['basis']+'.',
-          f"Training optimizer updates: {selected['training_updates']}. A zero-step run is not evidence of learned improvement.",
-          selected['format']+'. Comparison measures the combined effects of quantization and learned merging.',
-          '## Pilot benchmark comparison (macro over selected languages)',
-          summary.to_csv(index=False),
+          f"Selection: {selected['selection']}. Measured {selected['searched_plans']} surrogate plans and {selected['nf4_finalists']} NF4 finalists; no global-optimum claim.",
+          f"Original NF4 ranking CE: {base['nf4_ranking']:.6f}; selected NF4 ranking CE: {selected['ranking_ce']:.6f}; delta: {selected['ce_increase_original']:.6f}.",
+          f"Original NF4 validation CE: {base['nf4_validation']:.6f}; selected NF4 validation CE: {selected['final_nf4_validation_ce']:.6f}; delta: {selected['final_nf4_ce_increase']:.6f}.",
+          f"Final serialized bytes: {selected['serialized_bytes']}; original NF4 bytes: {base['nf4_serialized_bytes']}; original FP16-width reference bytes: {base['reference_storage']['bytes']}.",
+          f"Total saving vs FP16: {100*selected['actual_reduction']:.2f}%; additional saving vs original NF4: {100*selected['reduction_vs_original_nf4']:.2f}%. Quantization savings are not attributed to the merger.",
+          f"At least 40% storage target met: {selected['storage_target_met']}; at least 50%: {selected['target_50_met']}. Savings above 50% are acceptable.",
+          'FP16 storage reference: '+base['reference_storage']['basis']+'.',
+          selected['format']+'. Both benchmark models use the same NF4 double-quantization/FP16-compute policy. FP16 teacher is restricted to training.',
+          '## Pilot accuracy (macro over selected languages)',summary.to_csv(index=False),
           f"Observed five-percentage-point target met on every benchmark: {all(r['observed_target_met'] for r in aggregate)}. Negative degradation denotes improvement.",
-          'Answer-position frequencies are computed from these same predictions (answer_option_frequencies.csv).',
-          'Limitations: very small, preliminary pilot; no statistical confirmation of the accuracy target. CE is a selection proxy, not an accuracy guarantee. Estimates shortlisted plans; actual NF4 storage and CE were verified only for the chosen model. No automatic reselection using benchmark scores.',
-          'Per-language results: benchmark_results/'+cfg.evaluation_mode+'/per_language_accuracy.csv.']
+          'Per-language correct counts, accuracies, absolute/relative degradation, invalid and truncated counts: per_language_accuracy.csv. Answer-option frequencies reuse the same predictions.',
+          'Limitations: ten-question language samples are preliminary and cannot establish a five-point threshold scientifically. CE does not guarantee accuracy; no acceptable performance is claimed solely from CE. Large losses are reported without benchmarking more candidates. Coverage proxies do not establish dedicated dialect training.']
     report=out/'REPORT.md'; report.write_text('\n\n'.join(text)+'\n',encoding='utf-8')
     return report

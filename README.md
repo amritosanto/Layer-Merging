@@ -1,32 +1,26 @@
-# Optimized CE-guided Qwen3 smoke experiment
+# Five-epoch multilingual Qwen3 NF4 experiment
 
-Run on Kaggle with Internet and **T4 x2** using `Qwen3_Merger_Optimized_Kaggle.ipynb`.
-The notebook clones this repository, preserves Kaggle CUDA PyTorch, and installs binary wheels compatible with Python 3.13. Do not install the historical requirements.txt on Python 3.13; use the launcher dependency cell.
+Upload `Qwen3_5Epoch_Multilingual_NF4_Kaggle_Launcher.ipynb` to Kaggle, enable Internet, select **T4 x2**, and run its cells in order. It clones this repository, preserves Kaggle CUDA PyTorch, and installs binary wheels compatible with Python 3.13. Use the notebook dependency cell instead of the historical requirements.txt.
 
 ```bash
 python run.py smoke --config config.smoke.json
-# Independent resumable stages:
+# Separately resumable stages: prepare, preflight, train, search, export, benchmark, report
 python run.py train --config config.smoke.json
-python run.py rank-export --config config.smoke.json
-python run.py benchmark --config config.smoke.json
-python run.py report --config config.smoke.json
 ```
 
-Defaults: one epoch, at most 30 updates, 0.5-hour training budget (preflight/search/benchmarks add overhead), 128-token windows and three discovered Wiki-40B languages. It retains the six-block, width-384, six-head merger and unchanged hidden/KD/correction objective. The teacher is frozen original FP16. Source weights are quantized NF4 before dense differentiable merging.
+Defaults: **five complete epochs**, no optimizer-step or time cap, 128-token windows, and per-language budgets of 512 training / 256 validation / 256 ranking tokens. English, Hindi and Japanese stream from Wiki-40B; Bengali, Swahili, Yoruba and Telugu stream from FineWeb2. Sources use pinned revisions and verified configurations. `manifests/language_coverage.json` records exact/proxy/unavailable coverage for the official Qwen3 119 language/dialect entries plus requested Yoruba, and distinguishes availability from actual sampling. Unavailable requested languages fail explicitly unless a replacement is configured. No whole-corpus download is required.
 
-Selection scans 27 pairs on a separate held-out ranking partition, then uses DP across 1–14 compatible pairs and bounded local swaps. At most 12 whole-plan candidates are shortlisted, including refinements. Actual whole-model ranking CE determines the choice, preferring estimated 40–50% size savings, then >=40%; if infeasible the report explicitly records the unmet target. This is the best plan found within a budget, not a global optimum. Candidate CE uses the dense representation of NF4-source weights; final NF4 CE is measured separately. No benchmark score selects a plan.
+The six-block, width-384, six-head merger, training objective and dual-GPU training remain unchanged. The teacher stays frozen FP16 during training. Search and benchmarks compare **original_nf4** against **best_learned_nf4**, using the same NF4 double quantization and FP16 compute policy.
 
-Only `best_learned_nf4` is exported and compared against `original_fp16` (three language configs and five questions each in smoke mode). Cached predictions are reused only with matching weights and frozen prompts/protocol. No deletion/average/original-NF4 benchmark matrix is run. The comparison includes both quantization and merging effects. Answer-option frequencies reuse those predictions. A five-percentage-point target is an observed pilot outcome, not statistical confirmation.
+Search scans adjacent pairs, then evaluates at most 12 whole-plan surrogate candidates with up to two local refinements. At most three finalists are requantized and scored in memory; only the selected learned NF4 checkpoint is exported. Lowest measured NF4 ranking CE is primary among storage-feasible finalists; near ties prefer more merged layers. At least 40% saving against the published original 16-bit checkpoint is targeted, and savings of 50% or more are welcome. Actual savings against both original FP16-width storage and original NF4 storage are reported separately. This is a budget-limited search, not a global optimum; CE does not guarantee benchmark accuracy.
 
-To evaluate all languages later copy the same configuration, set `benchmark_languages=null` and `evaluation_mode="full"`, then run benchmark and report against the same output directory. Training settings must remain unchanged; full predictions use a separate namespace. For fuller training, choose a fresh output directory and raise the step/time/data budgets explicitly.
+Pilot benchmarks use identical frozen prompts for both models: ten questions per language, three languages per benchmark, five-shot MMMLU/INCLUDE and eight-shot MGSM. MGSM has a separate 256-new-token budget and uses the first completed final answer before any unrelated next question; invalid and truncated outputs are counted separately. Pilot results cannot establish a five-percentage-point threshold statistically.
 
-Resume by re-running the same stages with the same configuration and output directory. Code/config/data/checkpoint fingerprints must match. Use a fresh output directory after changing experimental settings or code. A completed training checkpoint is not retrained; valid CE caches and completed predictions are reused. Partial exports without a completion manifest are rewritten by the export stage. Keep the entire output directory for resume, including manifests and the small Wiki token cache. Interrupted training retains a resumable latest checkpoint; completed training retains merger_final.pt.
+Outputs use the fresh directory `/kaggle/working/outputs/smoke_5epoch_multilingual_nf4`. Resume the same stages with unchanged code/configuration and the complete output directory, including manifests, token cache and the original NF4 reference. Interrupted training saves its latest state; only five completed epochs produce the completion marker and final checkpoint. A capped run fails explicitly rather than being labeled complete. Changed scientific settings require a fresh output directory. Search, predictions and exports are reused only when their identities match.
 
-Artifacts: `rankings/{single_pair_ce.csv,candidate_plans.csv,selected_plan.json}`, `model_exports/best_learned_nf4`, `benchmark_results/pilot/{original_fp16,best_learned_nf4}`, CSV comparisons, training metrics, and `REPORT.md`. Prediction subdirectories retain the existing variant-based layout for compatibility. Model checkpoints and datasets must not be committed.
+Artifacts include `logs/training_metrics.json`, `manifests/language_coverage.json`, `rankings/{candidate_plans.csv,nf4_finalists.csv,selected_plan.json}`, `reference_models/original_nf4`, `model_exports/best_learned_nf4`, paired pilot predictions, accuracy CSV files and `REPORT.md`. The report records completed epochs, tokens, CE, serialized sizes, compression, correct/invalid/truncated counts and limitations. Do not commit datasets, model weights or output caches.
 
-Final export bytes are measured including tokenizer/config/quantization metadata. Original reference bytes come from the pinned published 16-bit checkpoint and its tokenizer/config files; FP16 has the same tensor byte width. Candidate NF4 estimates include unchanged FP16 embeddings/norms/head and double-quantization scales, but are approximate. A final storage miss is reported without benchmarking another plan. NF4-only savings above 50% are not reversed.
-
-Local checks use small synthetic models; full pretrained NF4 export and dual-T4 smoke execution remain unverified until run on Kaggle. No pretrained training or benchmark results are claimed here.
+Local validation uses synthetic data and small models. Full pretrained NF4 serialization, dual-T4 execution and benchmark accuracy remain unverified until the notebook runs on Kaggle. No model weights or corpus shards were downloaded for local checks.
 
 ---
 ## Historical implementation notes (superseded defaults)

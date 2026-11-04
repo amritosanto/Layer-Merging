@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 from huggingface_hub import HfApi
 from benchmarks import mmmlu,include,mgsm
 from .utils import atomic_json,digest
-from .quantization import load_model,dequantized_copy,MODEL_LOAD_LOCK
+from .quantization import load_model,dequantized_copy,MODEL_LOAD_LOCK,verify_nf4,nf4_config
 
 def content_id(row):return hashlib.sha256(row['question'].strip().encode()).hexdigest()
 
@@ -34,10 +34,10 @@ def mc_prompt(support,target):
 
 def prepare_benchmarks(cfg,lock,tokenizer):
     path=Path(cfg.output_dir)/f'manifests/benchmark_prompts_{cfg.evaluation_mode}.json'
-    protocol=dict(language_subset=cfg.benchmark_languages,experiment_mode=cfg.mode,mode=cfg.evaluation_mode,pilot=cfg.pilot_questions,seed=cfg.seed,
+    protocol=dict(quantization=nf4_config().to_dict(),mgsm_max_new_tokens=cfg.mgsm_max_new_tokens,language_subset=cfg.benchmark_languages,experiment_mode=cfg.mode,mode=cfg.evaluation_mode,pilot=cfg.pilot_questions,seed=cfg.seed,
                   shots=[cfg.mmmlu_few_shot,cfg.include_few_shot,cfg.mgsm_few_shot],context=cfg.eval_context,
                   max_new_tokens=cfg.max_new_tokens,model_revision=lock['model_revision'],revisions=lock['dataset_revisions'],
-                  version='fewshot-label-likelihood-v1',overflow='skip identical IDs for every variant; never truncate',
+                  version='nf4-paired-first-complete-answer-v3',overflow='skip identical IDs for every variant; never truncate',
                   mc_support='fixed stratified disjoint test support when no validation split; non-official protocol',
                   mgsm_alignment='same official row indices across languages; verify answer_number sequence')
     protocol=json.loads(json.dumps(protocol))
@@ -106,7 +106,7 @@ def prepare_benchmarks(cfg,lock,tokenizer):
             for example in examples:
                 example['input_ids']=tokenizer.encode(example['prompt'],add_special_tokens=False)
                 example['prompt_hash']=digest(example['prompt'])
-                reserve=cfg.max_new_tokens if benchmark=='MGSM' else 8
+                reserve=cfg.mgsm_max_new_tokens if benchmark=='MGSM' else 8
                 example['skip_reason']='context_overflow' if len(example['input_ids'])+reserve>cfg.eval_context else None
                 if benchmark=='MGSM' and cfg.evaluation_mode=='full' and example['skip_reason']:
                     raise ValueError(f'Full MGSM must score all 250 examples: {language}/{example["id"]} exceeds '
@@ -142,12 +142,17 @@ def generate_answers(model,tokenizer,examples,device,cfg,language):
     ids=torch.full((len(examples),width),tokenizer.pad_token_id,device=device,dtype=torch.long); mask=torch.zeros_like(ids)
     for i,e in enumerate(examples):
         n=len(e['input_ids']); ids[i,-n:]=torch.tensor(e['input_ids'],device=device); mask[i,-n:]=1
-    generated=model.generate(ids,attention_mask=mask,do_sample=False,max_new_tokens=cfg.max_new_tokens,
+    generated=model.generate(ids,attention_mask=mask,do_sample=False,max_new_tokens=cfg.mgsm_max_new_tokens,
                              pad_token_id=tokenizer.pad_token_id,eos_token_id=model.generation_config.eos_token_id)
     results=[]
+    eos=model.generation_config.eos_token_id
+    eos_ids=set(eos if isinstance(eos,list) else [eos])
     for row in generated[:,width:]:
-        text=tokenizer.decode(row,skip_special_tokens=True); answer=mgsm.extract_answer(text,language)
-        results.append(dict(prediction=answer,text=text,invalid=answer is None,
+        values=row.tolist(); stop=next((i for i,t in enumerate(values) if t in eos_ids),None)
+        truncated=stop is None and len(values)>=cfg.mgsm_max_new_tokens
+        text=tokenizer.decode(row if stop is None else row[:stop],skip_special_tokens=True)
+        answer=mgsm.extract_answer(text,language,complete=not truncated)
+        results.append(dict(prediction=answer,text=text,invalid=answer is None,truncated=truncated,
                             output_tokens=int((row!=tokenizer.pad_token_id).sum())))
     return results
 
@@ -157,7 +162,10 @@ def variants(cfg,lock):
     from .utils import file_digest
     if any(not (out/rel).is_file() or file_digest(out/rel)!=sha for rel,sha in final['files'].items()):
         raise RuntimeError('Final export integrity check failed')
-    return [dict(name='original_fp16',path=cfg.model_id,revision=lock['model_revision'],nf4=False,layers=28),
+    baseline=json.loads((out/'manifests/original_nf4.json').read_text())
+    if baseline['identity']!=dict(model_id=cfg.model_id,revision=lock['model_revision'],quantization=nf4_config().to_dict()):raise RuntimeError('NF4 baseline identity mismatch')
+    if any(not (out/'reference_models/original_nf4'/name).is_file() or file_digest(out/'reference_models/original_nf4'/name)!=sha for name,sha in baseline['files'].items()):raise RuntimeError('NF4 baseline cache changed')
+    return [dict(name='original_nf4',path=str(out/'reference_models/original_nf4'),revision=None,nf4=True,layers=28),
             dict(name='best_learned_nf4',path=str(out/'model_exports/best_learned_nf4'),revision=None,nf4=True,layers=final['remaining_layers'])]
 
 def read_predictions(path):
@@ -190,6 +198,7 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
                 pairs=torch.load(out/'checkpoints/generated_pairs.pt',map_location='cpu',weights_only=True)['pairs']
             model=compress_in_place(model,variant_spec['pairs'],variant_spec['method'],pairs); del pairs
         else:model=load_model(variant_spec['path'],variant_spec['revision'],device,variant_spec['nf4'])
+        verify_nf4(model)
         if cfg.eval_context>model.config.max_position_embeddings:raise ValueError('Evaluation context exceeds model capacity')
         # Hash actual tensors plus quantization metadata to invalidate changed checkpoint results.
         from .utils import module_hash
@@ -232,7 +241,7 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         stats['parameters']=sum(p.numel() for p in dense.parameters()); del dense
         final=json.loads((out/'manifests/final_export.json').read_text())
         if rank==0:
-            stats['stored_bytes']=(final['baseline']['reference_storage']['bytes'] if name=='original_fp16'
+            stats['stored_bytes']=(final['baseline']['nf4_serialized_bytes'] if name=='original_nf4'
                                    else final['serialized_bytes'])
         stat_path=root/f'performance_gpu{rank}_{"-".join(sorted({j["benchmark"] for j in jobs}))}.json'
         if stat_path.exists():

@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
-VERSION = 'qwen3-nf4-ce-search-v2'
+VERSION = 'qwen3-multilingual-nf4-v3'
 
 @dataclass
 class Config:
@@ -17,8 +17,10 @@ class Config:
     max_merged_pairs: int = 14
     max_candidate_plans: int = 12
     max_refinement_rounds: int = 2
+    max_final_nf4_candidates: int = 3
+    ce_comparable_tolerance: float = 0.01
     min_storage_reduction: float = 0.40
-    preferred_max_reduction: float = 0.50
+    target_storage_reduction: float = 0.50
     accuracy_loss_target: float = 0.05
     benchmark_languages: dict = None
     seed: int = 42
@@ -46,6 +48,10 @@ class Config:
     validation_tokens_per_language: int = 1024
     ranking_tokens_per_language: int = 1024
     wiki_dataset: str = 'google/wiki40b'
+    fineweb_dataset: str = 'HuggingFaceFW/fineweb-2'
+    fineweb_revision: str = 'af9c13333eb981300149d5ca60a8e9d659b276b9'
+    training_languages: tuple = ()
+    language_replacements: dict = None
     wiki_backend: str = 'hf'  # 'tfds' explicitly selects the official fallback release.
     wiki_languages: tuple = ()  # Empty discovers all available configs.
     wiki_shuffle_buffer: int = 128
@@ -64,6 +70,7 @@ class Config:
     eval_context: int = 4096
     eval_batch_size: int = 4
     max_new_tokens: int = 512
+    mgsm_max_new_tokens: int = 256
     bootstrap_samples: int = 2000
 
     def validate(self):
@@ -72,7 +79,9 @@ class Config:
         assert 1 <= self.min_merged_pairs <= self.max_merged_pairs <= 14
         assert self.max_candidate_plans >= 1 and self.max_refinement_rounds >= 0
         assert self.max_optimizer_steps >= 0
-        assert 0 < self.min_storage_reduction <= self.preferred_max_reduction < 1
+        assert 1 <= self.max_final_nf4_candidates <= self.max_candidate_plans
+        assert self.ce_comparable_tolerance >= 0 and self.mgsm_max_new_tokens > 0
+        assert 0 < self.min_storage_reduction <= self.target_storage_reduction < 1
         assert 0 <= self.accuracy_loss_target <= 1
         assert self.ce_weight == 0, 'Preserve hidden + KD + correction loss'
         assert self.merger_width % self.merger_heads == 0
@@ -80,7 +89,7 @@ class Config:
         assert self.evaluation_mode in ('pilot', 'full')
         assert self.wiki_backend in ('hf','tfds')
         assert self.gradient_accumulation >= 1 and self.temperature > 0
-        assert self.epochs > 0 and self.training_hours > 0
+        assert self.epochs > 0 and self.training_hours >= 0
         assert self.max_global_batch_size >= (1 if self.single_gpu_debug else 2)
         assert 0 < self.peak_memory_fraction < 1
         assert min(self.mmmlu_few_shot, self.include_few_shot, self.mgsm_few_shot) > 0

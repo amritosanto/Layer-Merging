@@ -1,0 +1,1199 @@
+{
+  "official_source": "https://qwenlm.github.io/blog/qwen3/",
+  "official_entry_count": 119,
+  "dataset_metadata": {
+    "wiki40b": "06bfe584d8193cf58f79c6354ecc2a2b94a7deea",
+    "fineweb2": "af9c13333eb981300149d5ca60a8e9d659b276b9"
+  },
+  "languages": [
+    {
+      "language": "English",
+      "official_qwen3": true,
+      "wiki_config": "en",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "French",
+      "official_qwen3": true,
+      "wiki_config": "fr",
+      "fineweb_configs": [
+        "fra_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Portuguese",
+      "official_qwen3": true,
+      "wiki_config": "pt",
+      "fineweb_configs": [
+        "por_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "German",
+      "official_qwen3": true,
+      "wiki_config": "de",
+      "fineweb_configs": [
+        "deu_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Romanian",
+      "official_qwen3": true,
+      "wiki_config": "ro",
+      "fineweb_configs": [
+        "ron_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Swedish",
+      "official_qwen3": true,
+      "wiki_config": "sv",
+      "fineweb_configs": [
+        "swe_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Danish",
+      "official_qwen3": true,
+      "wiki_config": "da",
+      "fineweb_configs": [
+        "dan_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Bulgarian",
+      "official_qwen3": true,
+      "wiki_config": "bg",
+      "fineweb_configs": [
+        "bul_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Russian",
+      "official_qwen3": true,
+      "wiki_config": "ru",
+      "fineweb_configs": [
+        "rus_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Czech",
+      "official_qwen3": true,
+      "wiki_config": "cs",
+      "fineweb_configs": [
+        "ces_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Greek",
+      "official_qwen3": true,
+      "wiki_config": "el",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Ukrainian",
+      "official_qwen3": true,
+      "wiki_config": "uk",
+      "fineweb_configs": [
+        "ukr_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Spanish",
+      "official_qwen3": true,
+      "wiki_config": "es",
+      "fineweb_configs": [
+        "spa_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Dutch",
+      "official_qwen3": true,
+      "wiki_config": "nl",
+      "fineweb_configs": [
+        "nld_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Slovak",
+      "official_qwen3": true,
+      "wiki_config": "sk",
+      "fineweb_configs": [
+        "slk_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Croatian",
+      "official_qwen3": true,
+      "wiki_config": "hr",
+      "fineweb_configs": [
+        "hrv_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Polish",
+      "official_qwen3": true,
+      "wiki_config": "pl",
+      "fineweb_configs": [
+        "pol_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Lithuanian",
+      "official_qwen3": true,
+      "wiki_config": "lt",
+      "fineweb_configs": [
+        "lit_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Norwegian Bokmål",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "nob_Latn"
+      ],
+      "proxy_language": "Norwegian",
+      "mapping_note": "",
+      "proxy_wiki_config": "no"
+    },
+    {
+      "language": "Norwegian Nynorsk",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "nno_Latn"
+      ],
+      "proxy_language": "Norwegian",
+      "mapping_note": "",
+      "proxy_wiki_config": "no"
+    },
+    {
+      "language": "Persian",
+      "official_qwen3": true,
+      "wiki_config": "fa",
+      "fineweb_configs": [
+        "fas_Arab"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Slovenian",
+      "official_qwen3": true,
+      "wiki_config": "sl",
+      "fineweb_configs": [
+        "slv_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Gujarati",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "guj_Gujr"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Latvian",
+      "official_qwen3": true,
+      "wiki_config": "lv",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Italian",
+      "official_qwen3": true,
+      "wiki_config": "it",
+      "fineweb_configs": [
+        "ita_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Occitan",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "oci_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Nepali",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "npi_Deva",
+        "npi_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Marathi",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mar_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Belarusian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "bel_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Serbian",
+      "official_qwen3": true,
+      "wiki_config": "sr",
+      "fineweb_configs": [
+        "srp_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Luxembourgish",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ltz_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Venetian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "vec_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Assamese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "asm_Beng",
+        "asm_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Welsh",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "cym_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Silesian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "szl_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Asturian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ast_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Chhattisgarhi",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "hne_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Awadhi",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "awa_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Maithili",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mai_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Bhojpuri",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "bho_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Sindhi",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "snd_Arab",
+        "snd_Deva",
+        "snd_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Irish",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "gle_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Faroese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "fao_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Hindi",
+      "official_qwen3": true,
+      "wiki_config": "hi",
+      "fineweb_configs": [
+        "hin_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Punjabi",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "pan_Guru"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Bengali",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ben_Beng"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Oriya",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ory_Orya"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Tajik",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "tgk_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Eastern Yiddish",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ydd_Hebr"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Lombard",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "lmo_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Ligurian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "lij_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Sicilian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "scn_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Friulian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "fur_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Sardinian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "srd_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Galician",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "glg_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Catalan",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "cat_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Icelandic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "isl_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Tosk Albanian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "als_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Limburgish",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "lim_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Dari",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [],
+      "proxy_language": "Persian",
+      "mapping_note": ""
+    },
+    {
+      "language": "Afrikaans",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "afr_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Macedonian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mkd_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Sinhala",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "sin_Sinh"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Urdu",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "urd_Arab"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Magahi",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mag_Deva"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Bosnian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "bos_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Armenian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "hye_Armn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Simplified Chinese",
+      "official_qwen3": true,
+      "wiki_config": "zh-cn",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Traditional Chinese",
+      "official_qwen3": true,
+      "wiki_config": "zh-tw",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Cantonese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "yue_Hani"
+      ],
+      "proxy_language": "Traditional Chinese",
+      "mapping_note": ""
+    },
+    {
+      "language": "Burmese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mya_Mymr"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Standard Arabic",
+      "official_qwen3": true,
+      "wiki_config": "ar",
+      "fineweb_configs": [
+        "arb_Arab"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Najdi Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ars_Arab"
+      ],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": ""
+    },
+    {
+      "language": "Levantine Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "apc_Arab"
+      ],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": "Levantine is broad; inspect regional representation"
+    },
+    {
+      "language": "Egyptian Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "arz_Arab"
+      ],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": ""
+    },
+    {
+      "language": "Moroccan Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ary_Arab"
+      ],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": ""
+    },
+    {
+      "language": "Mesopotamian Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "acm_Arab"
+      ],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": ""
+    },
+    {
+      "language": "Ta’izzi-Adeni Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": ""
+    },
+    {
+      "language": "Tunisian Arabic",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "aeb_Arab"
+      ],
+      "proxy_language": "Standard Arabic",
+      "mapping_note": ""
+    },
+    {
+      "language": "Hebrew",
+      "official_qwen3": true,
+      "wiki_config": "he",
+      "fineweb_configs": [
+        "heb_Hebr"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Maltese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mlt_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Indonesian",
+      "official_qwen3": true,
+      "wiki_config": "id",
+      "fineweb_configs": [
+        "ind_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Malay",
+      "official_qwen3": true,
+      "wiki_config": "ms",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Tagalog",
+      "official_qwen3": true,
+      "wiki_config": "tl",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Cebuano",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ceb_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Javanese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "jav_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Sundanese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "sun_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Minangkabau",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "min_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Balinese",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ban_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Banjar",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "bjn_Arab",
+        "bjn_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Pangasinan",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "pag_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Iloko",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "ilo_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Waray (Philippines)",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "war_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Tamil",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "tam_Taml"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Telugu",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "tel_Telu"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Kannada",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "kan_Knda"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Malayalam",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "mal_Mlym"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Turkish",
+      "official_qwen3": true,
+      "wiki_config": "tr",
+      "fineweb_configs": [
+        "tur_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "North Azerbaijani",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "azj_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Northern Uzbek",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "uzn_Cyrl",
+        "uzn_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Kazakh",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "kaz_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Bashkir",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "bak_Cyrl"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Tatar",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "tat_Cyrl",
+        "tat_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Thai",
+      "official_qwen3": true,
+      "wiki_config": "th",
+      "fineweb_configs": [
+        "tha_Thai"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Lao",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "lao_Laoo"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Finnish",
+      "official_qwen3": true,
+      "wiki_config": "fi",
+      "fineweb_configs": [
+        "fin_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Estonian",
+      "official_qwen3": true,
+      "wiki_config": "et",
+      "fineweb_configs": [],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Hungarian",
+      "official_qwen3": true,
+      "wiki_config": "hu",
+      "fineweb_configs": [
+        "hun_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Vietnamese",
+      "official_qwen3": true,
+      "wiki_config": "vi",
+      "fineweb_configs": [
+        "vie_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Khmer",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "khm_Khmr"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Japanese",
+      "official_qwen3": true,
+      "wiki_config": "ja",
+      "fineweb_configs": [
+        "jpn_Jpan"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Korean",
+      "official_qwen3": true,
+      "wiki_config": "ko",
+      "fineweb_configs": [
+        "kor_Hang"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Georgian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "kat_Geor"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Basque",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "eus_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Haitian",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "hat_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Papiamento",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "pap_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Kabuverdianu",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "kea_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Tok Pisin",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "tpi_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Swahili",
+      "official_qwen3": true,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "swh_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    },
+    {
+      "language": "Yoruba",
+      "official_qwen3": false,
+      "wiki_config": null,
+      "fineweb_configs": [
+        "yor_Latn"
+      ],
+      "proxy_language": null,
+      "mapping_note": ""
+    }
+  ]
+}

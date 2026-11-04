@@ -51,11 +51,12 @@ def local_swaps(plan,n=28):
     return sorted(result)
 
 
-def select_measured(rows,minimum_reduction=.4,preferred_max=.5):
-    """CE decides within the preferred range, then among >= minimum savings."""
+def select_measured(rows,minimum_reduction=.4,comparable_tolerance=.01):
+    """No upper savings penalty; favor compression within a small CE tolerance."""
     finite=[r for r in rows if np.isfinite(r['ranking_ce'])]
     feasible=[r for r in finite if r['reduction']>=minimum_reduction]
-    preferred=[r for r in feasible if r['reduction']<=preferred_max]
-    pool=preferred or feasible or finite
+    pool=feasible or finite
     if not pool:raise ValueError('No finite candidate CE')
-    return min(pool,key=lambda r:(r['ranking_ce'],len(r['pairs']),tuple(r['pairs'])))
+    best=min(r['ranking_ce'] for r in pool)
+    comparable=[r for r in pool if r['ranking_ce']<=best+comparable_tolerance]
+    return min(comparable,key=lambda r:(-len(r['pairs']),r['ranking_ce'],tuple(r['pairs'])))

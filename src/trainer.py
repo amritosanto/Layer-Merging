@@ -29,10 +29,10 @@ def prepare_run(cfg):
     lock_path=out/'manifests/run.json'; settings=json.loads(json.dumps(asdict(cfg)))
     from .utils import file_digest
     root=Path(__file__).resolve().parents[1]
-    implementation=digest({str(p.relative_to(root)):file_digest(p) for p in sorted(list((root/'src').glob('*.py'))+list((root/'benchmarks').glob('*.py'))+[root/'config.py',root/'run.py'])})
+    implementation=digest({str(p.relative_to(root)):file_digest(p) for p in sorted(list((root/'src').glob('*.py'))+list((root/'benchmarks').glob('*.py'))+[root/'config.py',root/'run.py',root/'src/language_coverage.json'])})
     # Benchmark protocol is locked separately, so full evaluation can reuse pilot-trained weights.
     for key in ('evaluation_mode','pilot_questions','mmmlu_few_shot','include_few_shot','mgsm_few_shot',
-                'eval_context','eval_batch_size','max_new_tokens','bootstrap_samples','benchmark_languages'):
+                'eval_context','eval_batch_size','max_new_tokens','bootstrap_samples','benchmark_languages','mgsm_max_new_tokens'):
         settings.pop(key)
     if lock_path.exists():
         lock=json.loads(lock_path.read_text())
@@ -40,6 +40,7 @@ def prepare_run(cfg):
         return lock
     api=HfApi()
     revisions={name:api.dataset_info(name).sha for name in ('openai/MMMLU',cfg.include_dataset,'juletxara/mgsm')}
+    revisions[cfg.fineweb_dataset]=api.dataset_info(cfg.fineweb_dataset,revision=cfg.fineweb_revision).sha
     revisions[cfg.wiki_dataset]='tfds-wiki40b-1.3.0' if cfg.wiki_backend=='tfds' else api.dataset_info(cfg.wiki_dataset).sha
     lock=dict(version=VERSION,implementation=implementation,config=settings,model_revision=api.model_info(cfg.model_id,revision=cfg.model_revision).sha,
               dataset_revisions=revisions)
@@ -89,7 +90,7 @@ class AnchoredExperiment:
         qpath=self.out/'manifests/quantization.json'
         if qpath.exists() and json.loads(qpath.read_text())!=self.quant_manifest:raise RuntimeError('Source quantization changed; refusing resume')
         atomic_json(self.quant_manifest,qpath)
-        self.data,self.data_manifest=prepare_data(cfg,self.tokenizer,self.lock['dataset_revisions'][cfg.wiki_dataset])
+        self.data,self.data_manifest=prepare_data(cfg,self.tokenizer,self.lock['dataset_revisions'])
         self.signature=digest(dict(run=self.lock,data=self.data_manifest,quantization=self.quant_manifest))
         self.dual=DualWorkers(self.teacher,self.source,self.merger,cfg)
         self.optimizer=torch.optim.AdamW(self.merger.parameters(),lr=cfg.learning_rate,weight_decay=cfg.weight_decay)
@@ -232,7 +233,7 @@ class AnchoredExperiment:
                 windows=balanced_epoch(self.data,self.cfg.train_seq_len,self.cfg.seed,self.state['epoch'])
                 while self.state['cursor']<len(windows):
                     elapsed=base+time.monotonic()-started
-                    if elapsed>=self.cfg.training_hours*3600 or (self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps):break
+                    if (self.cfg.training_hours and elapsed>=self.cfg.training_hours*3600) or (self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps):break
                     step_start=time.monotonic(); cursor=self.state['cursor']; bs=self.state['batch_size']
                     stop=min(cursor+bs*self.cfg.gradient_accumulation,len(windows))
                     plan=task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs)
@@ -251,7 +252,7 @@ class AnchoredExperiment:
                     if self.scaler.get_scale()<old_scale:
                         if self.scaler.get_scale()<1:raise FloatingPointError('Repeated AMP overflow; inspect source/losses')
                         continue  # Retry same cursor; no skipped examples.
-                    self.dual.synchronize(); duration=time.monotonic()-step_start
+                    self.dual.synchronize(); duration=max(time.monotonic()-step_start,1e-9)
                     self.state.update(step=self.state['step']+1,cursor=stop,seconds=base+time.monotonic()-started)
                     row=dict(**totals,grad_norm=float(norm),step=self.state['step'],epoch=self.state['epoch'],
                              pairs=str(plan),global_batch=stop-cursor,seconds=duration,tokens_per_second=(stop-cursor)*self.cfg.train_seq_len/duration,
@@ -263,12 +264,14 @@ class AnchoredExperiment:
                     if self.state['step']%self.cfg.save_every_steps==0:self.save()
                 if self.state['cursor']<len(windows):break
                 self.state['epoch']+=1; self.state['cursor']=0; self.validate(); self.save()
+            if self.state['epoch']<self.cfg.epochs:
+                raise RuntimeError(f"Training incomplete: {self.state['epoch']}/{self.cfg.epochs} epochs; checkpoint saved for resume. Increase/disable the time or step cap.")
             if self.validation[-1]['step']!=self.state['step']:self.validate()
             self.state['seconds']=base+time.monotonic()-started
             self.integrity()
             self.save()
             (self.out/'checkpoints/latest.pt').replace(self.out/'checkpoints/merger_final.pt')
-            atomic_json(dict(state=self.state,metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
+            atomic_json(dict(state=self.state,actual_training_tokens_per_language={l:sum(json.loads(r['languages']).count(l)*self.cfg.train_seq_len for r in self.logs) for l in self.data},metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
             atomic_json(dict(state=self.state,signature=self.signature,stop_reason=('steps' if self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps else 'epochs' if self.state['epoch']==self.cfg.epochs else 'time_budget'),
                              checkpoint_sha256=file_digest(self.out/'checkpoints/merger_final.pt'),integrity_passed=True),self.out/'manifests/training_complete.json')
         finally:

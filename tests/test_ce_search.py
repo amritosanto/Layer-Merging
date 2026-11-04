@@ -24,15 +24,15 @@ def test_measured_ce_and_storage_select_plan():
     rows=[dict(pairs=[0],ranking_ce=3.,reduction=.45),
           dict(pairs=[2,4],ranking_ce=2.,reduction=.48),
           dict(pairs=[0,2,4],ranking_ce=1.,reduction=.65)]
-    assert select_measured(rows)['pairs']==[2,4]
+    assert select_measured(rows)['pairs']==[0,2,4]
     assert select_measured(rows[2:])['pairs']==[0,2,4]
-    assert select_measured([dict(pairs=[0],ranking_ce=2.,reduction=.6),dict(pairs=[0,2],ranking_ce=2.,reduction=.7)])['pairs']==[0]
+    assert select_measured([dict(pairs=[0],ranking_ce=2.,reduction=.6),dict(pairs=[0,2],ranking_ce=2.,reduction=.7)])['pairs']==[0,2]
     with pytest.raises(ValueError):select_measured([dict(pairs=[0],ranking_ce=float('nan'),reduction=.5)])
 
 
 def test_smoke_config_and_json_normalization(tmp_path):
     cfg=Config.load('config.smoke.json')
-    assert (cfg.epochs,cfg.max_optimizer_steps,cfg.training_hours)==(1,30,.5)
+    assert (cfg.epochs,cfg.max_optimizer_steps,cfg.training_hours)==(5,0,0)
     assert (cfg.merger_blocks,cfg.merger_width,cfg.merger_heads)==(6,384,6)
     assert cfg.ce_weight==0 and cfg.quantization=='nf4' and cfg.teacher_precision=='fp16'
     path=tmp_path/'config.json'; cfg.save(path)
@@ -44,14 +44,18 @@ def test_only_two_benchmark_variants(tmp_path):
     folder=tmp_path/'manifests'; folder.mkdir()
     weight=tmp_path/'model.safetensors'; weight.write_bytes(b'fixture')
     (folder/'final_export.json').write_text(json.dumps(dict(remaining_layers=22,files={'model.safetensors':file_digest(weight)})))
+    baseline=tmp_path/'reference_models/original_nf4'; baseline.mkdir(parents=True)
+    (baseline/'weights').write_bytes(b'NF4 fixture')
+    from src.quantization import nf4_config
+    (folder/'original_nf4.json').write_text(json.dumps(dict(identity=dict(model_id=cfg.model_id,revision='immutable',quantization=nf4_config().to_dict()),files={'weights':file_digest(baseline/'weights')})))
     specs=variants(cfg,{'model_revision':'immutable'})
-    assert [(s['name'],s['nf4']) for s in specs]==[('original_fp16',False),('best_learned_nf4',True)]
+    assert [(s['name'],s['nf4']) for s in specs]==[('original_nf4',True),('best_learned_nf4',True)]
     weight.write_bytes(b'changed')
     with pytest.raises(RuntimeError):variants(cfg,{'model_revision':'immutable'})
 
 
 def test_launcher_syntax():
-    n=json.loads(Path('Qwen3_Merger_Optimized_Kaggle.ipynb').read_text())
+    n=json.loads(Path('Qwen3_5Epoch_Multilingual_NF4_Kaggle_Launcher.ipynb').read_text())
     assert n['nbformat']==4
     for c in n['cells']:
         if c['cell_type']=='code':ast.parse(''.join(c['source']))
@@ -75,7 +79,7 @@ def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch):
             return dict(train=Split(dict(question=f'support {i}',answer_number=str(i),answer='reason '+str(i)) for i in range(8)),
                         test=Split(dict(question=f'test {i}',answer_number=str(i)) for i in range(250)))
         return dict(test=Split(dict(question=f'{language} question {i}',choices=['one','two'],label=i%2,
-                                    id=str(i),subject='s',domain='d',regional='r') for i in range(12)))
+                                    id=str(i),subject='s',domain='d',regional='r') for i in range(20)))
     monkeypatch.setattr(b,'load_dataset',load)
     monkeypatch.setattr(b,'get_dataset_config_names',lambda *a,**kw:['Hindi','Japanese','Albanian','Dutch-Flemish'])
     monkeypatch.setattr(b,'HfApi',lambda:SimpleNamespace(list_repo_files=lambda *a,**kw:[f'{lang}/test-0.parquet' for lang in ['Hindi','Japanese','Albanian']]))
@@ -85,7 +89,7 @@ def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch):
     lock=dict(model_revision='model',dataset_revisions={d:'revision' for d in ['openai/MMMLU',cfg.include_dataset,'juletxara/mgsm']})
     result=prepare_benchmarks(cfg,lock,tokenizer)
     assert len(calls)==9 and len(result['jobs'])==9
-    assert all(len(j['examples'])==5 for j in result['jobs'])
+    assert all(len(j['examples'])==10 for j in result['jobs'])
     assert all(len(e['support_ids'])==8 for j in result['jobs'] if j['benchmark']=='MGSM' for e in j['examples'])
     assert prepare_benchmarks(cfg,lock,tokenizer)==result
     assert len(calls)==9  # Frozen prompt cache reused, no extra dataset loads.

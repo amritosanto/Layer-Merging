@@ -1,5 +1,6 @@
 """Budget-limited CE selection; benchmark results never enter this module."""
 import json
+import copy
 import math
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -35,16 +36,17 @@ def reference_storage(cfg,lock):
                 basis='Published original 16-bit checkpoint and tokenizer/config files; FP16 has the same tensor byte width')
 
 
-def search_and_export(experiment):
+def search_and_export(experiment,export=True):
     e=experiment; cfg=e.cfg; out=e.out
     completion=out/'manifests/training_complete.json'
     if not completion.exists():raise RuntimeError('Training must complete before CE search')
     saved=torch.load(out/'checkpoints/merger_final.pt',map_location='cpu',weights_only=False)
+    if saved['state']['epoch']!=cfg.epochs:raise RuntimeError('Training has not completed every epoch')
     if saved['signature']!=e.signature or json.loads(completion.read_text())['signature']!=e.signature:
         raise RuntimeError('Final checkpoint/run signature mismatch')
     e.merger.load_state_dict(saved['merger']); e.merger.eval(); e.dual.sync(); e.dual.clear()
     checkpoint_hash=module_hash(e.merger)
-    key=digest([e.signature,checkpoint_hash,e.data_manifest['token_digest'],'ce-search-v2'])
+    key=digest([e.signature,checkpoint_hash,e.data_manifest['token_digest'],'ce-search-nf4-v3'])
     final_path=out/'manifests/final_export.json'
     if final_path.exists():
         final=json.loads(final_path.read_text())
@@ -58,13 +60,17 @@ def search_and_export(experiment):
     if cache['key']!=key:raise RuntimeError('CE cache belongs to different checkpoint/data/protocol')
     def flush():atomic_json(cache,path)
     from .trainer import score_tokens
+    from .quantization import load_model,verify_nf4,quantize_dense_nf4
     if 'baseline' not in cache:
         reference=reference_storage(cfg,e.lock)
-        cache['baseline']=dict(teacher_ranking=e.score(partition='ranking',model=e.teacher)[0],
-                               teacher_validation=e.score(model=e.teacher)[0],
-                               source_ranking=e.score(partition='ranking')[0],reference_storage=reference,
-                               unmerged_nf4_estimated_reduction=1-storage_estimate(e.source,())[1]/reference['bytes'])
-        flush()
+        baseline=load_model(str(out/'reference_models/original_nf4'),None,'cuda:0',True)
+        verify_nf4(baseline)
+        def baseline_ce(partition):
+            return float(np.mean([score_tokens(baseline,d[partition],cfg) for d in e.data.values()]))
+        cache['baseline']=dict(nf4_ranking=baseline_ce('ranking'),nf4_validation=baseline_ce('validation'),
+                               nf4_serialized_bytes=e.quant_manifest['nf4_serialized_bytes'],
+                               source_ranking=e.score(partition='ranking')[0],reference_storage=reference)
+        del baseline; torch.cuda.empty_cache(); flush()
     base=cache['baseline']; original_bytes=base['reference_storage']['bytes']
     def measure(plans):
         missing=[tuple(p) for p in plans if ','.join(map(str,p)) not in cache['plans']]
@@ -87,7 +93,7 @@ def search_and_export(experiment):
         for plan in plans:
             ce=cache['plans'][','.join(map(str,plan))]; count,size=storage_estimate(e.source,plan)
             rows.append(dict(pairs=list(plan),merged_pairs=len(plan),remaining_layers=28-len(plan),ranking_ce=ce,
-                             ce_increase_original=ce-base['teacher_ranking'],ce_increase_source=ce-base['source_ranking'],
+                             ce_increase_original=ce-base['nf4_ranking'],ce_increase_source=ce-base['source_ranking'],
                              estimated_parameters=count,estimated_nf4_bytes=size,reduction=1-size/original_bytes))
         return rows
     singles=measure([(i,) for i in range(27)])
@@ -101,39 +107,54 @@ def search_and_export(experiment):
     rows=measure(plans)
     for _ in range(cfg.max_refinement_rounds):
         if len(rows)>=cfg.max_candidate_plans:break
-        best=select_measured(rows,cfg.min_storage_reduction,cfg.preferred_max_reduction)
+        best=select_measured(rows,cfg.min_storage_reduction,cfg.ce_comparable_tolerance)
         seen={tuple(r['pairs']) for r in rows}
         neighbors=[p for p in local_swaps(best['pairs']) if p not in seen]
         if not neighbors:break
         plan=min(neighbors,key=lambda p:(sum(costs[i] for i in p),p))
         rows+=measure([plan])
     pd.DataFrame(rows).to_csv(out/'rankings/candidate_plans.csv',index=False)
-    selected=select_measured(rows,cfg.min_storage_reduction,cfg.preferred_max_reduction)
+    # NF4 finalists are scored in memory, with no candidate checkpoint exports.
+    remaining=list(rows); shortlist=[]
+    for _ in range(min(cfg.max_final_nf4_candidates,len(remaining))):
+        candidate=select_measured(remaining,cfg.min_storage_reduction,cfg.ce_comparable_tolerance)
+        shortlist.append(candidate); remaining.remove(candidate)
+    cache.setdefault('nf4_plans',{})
+    finalists=[]
+    for candidate in shortlist:
+        plan=tuple(candidate['pairs']); plan_key=','.join(map(str,plan))
+        if plan_key not in cache['nf4_plans']:
+            with torch.no_grad(),torch.autocast('cuda',dtype=torch.float16),variant(e.source,e.merger,plan):
+                final=quantize_dense_nf4(copy.deepcopy(e.source))
+            verify_nf4(final)
+            ce=float(np.mean([score_tokens(final,d['ranking'],cfg) for d in e.data.values()]))
+            if not math.isfinite(ce):raise FloatingPointError('Nonfinite NF4 finalist CE')
+            cache['nf4_plans'][plan_key]=dict(ce=ce,weight_hash=module_hash(final))
+            del final; torch.cuda.empty_cache(); flush()
+        result=cache['nf4_plans'][plan_key]
+        finalists.append(dict(candidate,surrogate_ranking_ce=candidate['ranking_ce'],ranking_ce=result['ce'],
+                              nf4_weight_hash=result['weight_hash'],ce_increase_original=result['ce']-base['nf4_ranking']))
+    pd.DataFrame(finalists).to_csv(out/'rankings/nf4_finalists.csv',index=False)
+    selected=select_measured(finalists,cfg.min_storage_reduction,cfg.ce_comparable_tolerance)
     selected=dict(selected,cache_key=key,checkpoint_hash=checkpoint_hash,baseline=base,
-                  training_updates=saved['state']['step'],searched_plans=len(rows),max_candidate_plans=cfg.max_candidate_plans,
-                  selection='Best measured ranking CE in preferred storage range, otherwise >=40%, otherwise best CE with unmet target; approximate budget-limited search')
-    selected['validation_ce']=e.score(tuple(selected['pairs']))[0]
-    selected['validation_ce_increase']=selected['validation_ce']-base['teacher_validation']
+                  training_updates=saved['state']['step'],completed_epochs=saved['state']['epoch'],
+                  searched_plans=len(rows),nf4_finalists=len(finalists),max_candidate_plans=cfg.max_candidate_plans,
+                  selection='Lowest measured NF4 CE among storage-feasible finalists; within configured CE tolerance favor more layer merges. Savings above 50% have no penalty. Approximate budget-limited search.')
     selected_path=out/'rankings/selected_plan.json'
-    export_path=out/'manifests/final_export.json'
-    if export_path.exists():
-        previous=json.loads(export_path.read_text())
-        if previous['cache_key']!=key or previous['pairs']!=selected['pairs']:raise RuntimeError('Stale final export')
-        # Verify the actual saved artifact before reusing it.
-        from .utils import file_digest
-        if any(not (out/rel).is_file() or file_digest(out/rel)!=sha for rel,sha in previous['files'].items()):
-            raise RuntimeError('Final export missing or modified')
-        return previous
+    atomic_json(selected,selected_path)
+    if not export:return selected
     e.integrity()
     final,info=export_best_nf4(e.source,e.merger,e.tokenizer,tuple(selected['pairs']),out/'model_exports/best_learned_nf4')
+    if info['weight_hash']!=selected['nf4_weight_hash']:raise RuntimeError('Export differs from scored NF4 finalist')
     selected.update(info)
     selected['final_nf4_validation_ce']=float(np.mean([score_tokens(final,d['validation'],cfg) for d in e.data.values()]))
-    selected['final_nf4_ce_increase']=selected['final_nf4_validation_ce']-base['teacher_validation']
+    selected['final_nf4_ce_increase']=selected['final_nf4_validation_ce']-base['nf4_validation']
     selected['actual_reduction']=1-info['serialized_bytes']/original_bytes
+    selected['reduction_vs_original_nf4']=1-info['serialized_bytes']/base['nf4_serialized_bytes']
     selected['storage_target_met']=selected['actual_reduction']>=cfg.min_storage_reduction
-    selected['preferred_range_met']=cfg.min_storage_reduction<=selected['actual_reduction']<=cfg.preferred_max_reduction
+    selected['target_50_met']=selected['actual_reduction']>=cfg.target_storage_reduction
     del final
     from .utils import file_digest
     selected['files']={str(p.relative_to(out)):file_digest(p) for p in (out/'model_exports/best_learned_nf4').rglob('*') if p.is_file()}
-    atomic_json(selected,selected_path); atomic_json(selected,export_path)
+    atomic_json(selected,selected_path); atomic_json(selected,out/'manifests/final_export.json')
     return selected

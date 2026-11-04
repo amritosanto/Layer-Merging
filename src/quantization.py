@@ -3,7 +3,9 @@ import gc
 from threading import RLock
 import torch
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
-from .utils import module_hash, tensor_hash
+from .utils import module_hash, tensor_hash,atomic_json,file_digest
+from pathlib import Path
+import json
 
 # Transformers/Accelerate temporarily patch process-global initialization state.
 # All model construction in benchmark threads must share this lock; inference
@@ -51,10 +53,29 @@ def dequantized_copy(quantized, device):
 
 def load_training_models(cfg,revision,device):
     teacher=load_model(cfg.model_id,revision,device)
-    quant=load_model(cfg.model_id,revision,device,True)
+    baseline_dir=Path(cfg.output_dir)/'reference_models/original_nf4'
+    baseline_manifest=Path(cfg.output_dir)/'manifests/original_nf4.json'
+    identity=dict(model_id=cfg.model_id,revision=revision,quantization=nf4_config().to_dict())
+    if baseline_manifest.exists():
+        info=json.loads(baseline_manifest.read_text())
+        if info['identity']!=identity or any(not (baseline_dir/name).is_file() or file_digest(baseline_dir/name)!=sha for name,sha in info['files'].items()):
+            raise RuntimeError('Original NF4 cache identity/integrity mismatch')
+        quant=load_model(str(baseline_dir),None,device,True)
+        verify_nf4(quant)
+    else:
+        quant=load_model(cfg.model_id,revision,device,True)
+        verify_nf4(quant)
+        baseline_dir.mkdir(parents=True,exist_ok=True)
+        save_nf4_checkpoint(quant,baseline_dir)
+        from transformers import AutoTokenizer
+        AutoTokenizer.from_pretrained(cfg.model_id,revision=revision).save_pretrained(baseline_dir)
+        files={str(p.relative_to(baseline_dir)):file_digest(p) for p in baseline_dir.rglob('*') if p.is_file()}
+        info=dict(identity=identity,files=files,serialized_bytes=sum((baseline_dir/name).stat().st_size for name in files))
+        atomic_json(info,baseline_manifest)
     dense,manifest=dequantized_copy(quant,device)
     manifest.update(quantization=nf4_config().to_dict(),teacher_hash=module_hash(teacher),
-                    teacher_bytes=teacher.get_memory_footprint(),nf4_bytes=quant.get_memory_footprint())
+                    teacher_bytes=teacher.get_memory_footprint(),nf4_bytes=quant.get_memory_footprint(),
+                    nf4_serialized_bytes=info['serialized_bytes'])
     if manifest['nf4_bytes'] >= manifest['teacher_bytes']:
         raise RuntimeError('NF4 did not reduce measured model storage')
     del quant; gc.collect(); torch.cuda.empty_cache()
@@ -85,3 +106,30 @@ def quantize_dense_nf4(model):
     model.quantization_method=QuantizationMethod.BITS_AND_BYTES
     model.is_quantized=True; model.is_loaded_in_4bit=True; model.is_4bit_serializable=True
     return model.eval().requires_grad_(False)
+
+
+def verify_nf4(model):
+    """Check the actual eligible weights and compute/storage policy, not a label."""
+    import bitsandbytes as bnb
+    count=0
+    for name,module in model.named_modules():
+        if not name.startswith('model.layers.') or not name.endswith(('_proj',)):
+            continue
+        if not isinstance(module,bnb.nn.Linear4bit) or not isinstance(module.weight,bnb.nn.Params4bit):
+            raise RuntimeError(f'Eligible matrix is not NF4: {name}')
+        state=module.weight.quant_state
+        if state is None or state.quant_type!='nf4' or not state.nested:
+            raise RuntimeError(f'Invalid NF4/double-quant state: {name}')
+        if module.compute_dtype!=torch.float16:raise RuntimeError('NF4 compute dtype must be FP16')
+        count+=1
+    if count==0:raise RuntimeError('No NF4 matrices found')
+    return count
+
+
+def save_nf4_checkpoint(model,destination):
+    verify_nf4(model)
+    marker=getattr(model.config,'_pre_quantization_dtype',None)
+    if hasattr(model.config,'_pre_quantization_dtype'):del model.config._pre_quantization_dtype
+    try:model.save_pretrained(destination,safe_serialization=True)
+    finally:
+        if marker is not None:model.config._pre_quantization_dtype=marker

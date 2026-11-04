@@ -1,5 +1,5 @@
 {
-  "output_dir": "/kaggle/working/Qwen3Merger",
+  "output_dir": "/kaggle/working/Qwen3Merger_CE_v2",
   "model_id": "Qwen/Qwen3-0.6B-Base",
   "model_revision": "main",
   "seed": 42,
@@ -45,5 +45,12 @@
   "eval_context": 4096,
   "eval_batch_size": 4,
   "max_new_tokens": 512,
-  "bootstrap_samples": 2000
+  "bootstrap_samples": 2000,
+  "max_search_pairs": 14,
+  "additive_candidates_per_count": 2,
+  "nf4_verify_limit": 14,
+  "max_ppl_increase": 0.05,
+  "min_total_size_reduction": 0.4,
+  "max_total_size_reduction": 0.5,
+  "allow_nf4_size_overshoot": true
 }

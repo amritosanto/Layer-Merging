@@ -1,0 +1,14 @@
+# Keep Kaggle's CUDA-enabled PyTorch; do not reinstall it.
+transformers==4.51.3
+datasets==3.5.1
+accelerate==1.6.0
+bitsandbytes==0.45.5
+huggingface-hub==0.30.2
+numpy==1.26.4
+pandas==2.2.3
+matplotlib==3.10.1
+safetensors==0.5.3
+sentencepiece==0.2.0
+pytest==8.3.5
+pyarrow==19.0.1
+python-dateutil==2.9.0.post0

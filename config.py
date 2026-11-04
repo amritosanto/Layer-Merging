@@ -1,0 +1,75 @@
+from dataclasses import dataclass, asdict
+from pathlib import Path
+import json
+
+VERSION = 'qwen3-nf4-anchored-v1'
+
+@dataclass
+class Config:
+    output_dir: str = '/kaggle/working/Qwen3Merger'
+    model_id: str = 'Qwen/Qwen3-0.6B-Base'
+    model_revision: str = 'main'  # Resolved once to immutable SHA in run lock.
+    seed: int = 42
+    epochs: int = 10
+    training_hours: float = 7.0
+    train_seq_len: int = 256
+    max_global_batch_size: int = 16
+    gradient_accumulation: int = 1
+    peak_memory_fraction: float = 0.85
+    learning_rate: float = 1e-4
+    weight_decay: float = 0.01
+    clip_grad: float = 1.0
+    kd_weight: float = 1.0
+    correction_weight: float = 0.01
+    ce_weight: float = 0.0
+    temperature: float = 2.0
+    logit_chunk_tokens: int = 32
+    merger_width: int = 384
+    merger_heads: int = 6
+    merger_blocks: int = 6
+    merger_ff_multiplier: int = 4
+    matrix_patch: int = 128
+    vector_patch: int = 128
+    train_tokens_per_language: int = 12000
+    validation_tokens_per_language: int = 1024
+    ranking_tokens_per_language: int = 1024
+    wiki_dataset: str = 'google/wiki40b'
+    wiki_backend: str = 'hf'  # 'tfds' explicitly selects the official fallback release.
+    wiki_languages: tuple = ()  # Empty discovers all available configs.
+    wiki_shuffle_buffer: int = 128
+    max_articles_per_language: int = 100000
+    allow_missing_languages: bool = False
+    single_gpu_debug: bool = False
+    save_every_steps: int = 50
+    validation_interval_minutes: float = 30.0
+    accept_margin_ce: float = 0.001
+    evaluation_mode: str = 'pilot'
+    pilot_questions: int = 100
+    mmmlu_few_shot: int = 5
+    include_few_shot: int = 5
+    mgsm_few_shot: int = 8
+    include_dataset: str = 'CohereLabs/include-lite-44'
+    eval_context: int = 4096
+    eval_batch_size: int = 4
+    max_new_tokens: int = 512
+    bootstrap_samples: int = 2000
+
+    def validate(self):
+        assert self.merger_width % self.merger_heads == 0
+        assert self.merger_blocks == 6, 'This experiment preserves six weight-attention blocks.'
+        assert self.evaluation_mode in ('pilot', 'full')
+        assert self.wiki_backend in ('hf','tfds')
+        assert self.gradient_accumulation >= 1 and self.temperature > 0
+        assert self.epochs > 0 and self.training_hours > 0
+        assert self.max_global_batch_size >= (1 if self.single_gpu_debug else 2)
+        assert 0 < self.peak_memory_fraction < 1
+        assert min(self.mmmlu_few_shot, self.include_few_shot, self.mgsm_few_shot) > 0
+        assert min(self.train_tokens_per_language,self.validation_tokens_per_language,self.ranking_tokens_per_language) >= 2
+        return self
+
+    def save(self, path):
+        Path(path).write_text(json.dumps(asdict(self), indent=2), encoding='utf-8')
+
+    @classmethod
+    def load(cls, path):
+        return cls(**json.loads(Path(path).read_text(encoding='utf-8'))).validate()

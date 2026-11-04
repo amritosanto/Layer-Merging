@@ -1,0 +1,193 @@
+{
+  "model": {
+    "revision": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
+    "architecture": {
+      "hidden_size": 1024,
+      "head_dim": 128,
+      "num_hidden_layers": 28,
+      "num_attention_heads": 16,
+      "num_key_value_heads": 8
+    },
+    "label_tokens": {
+      "A": [
+        362
+      ],
+      "B": [
+        425
+      ],
+      "C": [
+        356
+      ],
+      "D": [
+        422
+      ]
+    }
+  },
+  "google/wiki40b": {
+    "revision": "06bfe584d8193cf58f79c6354ecc2a2b94a7deea",
+    "configs": [
+      "ar",
+      "bg",
+      "ca",
+      "cs",
+      "da",
+      "de",
+      "el",
+      "en",
+      "es",
+      "et",
+      "fa",
+      "fi",
+      "fr",
+      "he",
+      "hi",
+      "hr",
+      "hu",
+      "id",
+      "it",
+      "ja",
+      "ko",
+      "lt",
+      "lv",
+      "ms",
+      "nl",
+      "no",
+      "pl",
+      "pt",
+      "ro",
+      "ru",
+      "sk",
+      "sl",
+      "sr",
+      "sv",
+      "th",
+      "tl",
+      "tr",
+      "uk",
+      "vi",
+      "zh-cn",
+      "zh-tw"
+    ],
+    "sample_config": "en",
+    "columns": [
+      "wikidata_id",
+      "text",
+      "version_id"
+    ],
+    "adapter_passed": true
+  },
+  "openai/MMMLU": {
+    "revision": "325a01dc3e173cac1578df94120499aaca2e2504",
+    "configs": [
+      "default",
+      "AR_XY",
+      "BN_BD",
+      "DE_DE",
+      "ES_LA",
+      "FR_FR",
+      "HI_IN",
+      "ID_ID",
+      "IT_IT",
+      "JA_JP",
+      "KO_KR",
+      "PT_BR",
+      "SW_KE",
+      "YO_NG",
+      "ZH_CN"
+    ],
+    "sample_config": "AR_XY",
+    "columns": [
+      "Unnamed: 0",
+      "Question",
+      "A",
+      "B",
+      "C",
+      "D",
+      "Answer",
+      "Subject"
+    ],
+    "adapter_passed": true
+  },
+  "CohereLabs/include-lite-44": {
+    "revision": "a027ccc923428c0c43c295a91efcc39a1e47fa60",
+    "configs": [
+      "Albanian",
+      "Arabic",
+      "Armenian",
+      "Azerbaijani",
+      "Basque",
+      "Belarusian",
+      "Bengali",
+      "Bulgarian",
+      "Chinese",
+      "Croatian",
+      "Dutch",
+      "Dutch-Flemish",
+      "Estonian",
+      "Finnish",
+      "French",
+      "Georgian",
+      "German",
+      "Greek",
+      "Hebrew",
+      "Hindi",
+      "Hungarian",
+      "Indonesian",
+      "Italian",
+      "Japanese",
+      "Kazakh",
+      "Korean",
+      "Lithuanian",
+      "Malay",
+      "Malayalam",
+      "Nepali",
+      "North Macedonian",
+      "Persian",
+      "Polish",
+      "Portuguese",
+      "Russian",
+      "Serbian",
+      "Spanish",
+      "Tagalog",
+      "Tamil",
+      "Telugu",
+      "Turkish",
+      "Ukrainian",
+      "Urdu",
+      "Uzbek",
+      "Vietnamese"
+    ],
+    "sample_config": "Albanian",
+    "columns": [
+      "language",
+      "country",
+      "domain",
+      "subject",
+      "regional_feature",
+      "level",
+      "question",
+      "choices",
+      "answer"
+    ],
+    "adapter_passed": true
+  },
+  "juletxara/mgsm": {
+    "revision": "b2f13d426afe3be8d69a7e739b36724db8b66bbc",
+    "languages": [
+      "en",
+      "es",
+      "fr",
+      "de",
+      "ru",
+      "zh",
+      "ja",
+      "th",
+      "sw",
+      "bn",
+      "te"
+    ],
+    "aligned_answer_sequences": true,
+    "train_examples": 8,
+    "test_examples": 250
+  }
+}

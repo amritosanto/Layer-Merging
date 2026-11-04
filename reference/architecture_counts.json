@@ -1,0 +1,131 @@
+{
+  "gpt2_merger_parameters": 39391168,
+  "qwen3_merger_parameters": 23676288,
+  "qwen3_weight_tokens": 1956,
+  "families": [
+    {
+      "name": "self_attn.q_proj.weight",
+      "shape": [
+        2048,
+        1024
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 128
+    },
+    {
+      "name": "self_attn.k_proj.weight",
+      "shape": [
+        1024,
+        1024
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 64
+    },
+    {
+      "name": "self_attn.v_proj.weight",
+      "shape": [
+        1024,
+        1024
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 64
+    },
+    {
+      "name": "self_attn.o_proj.weight",
+      "shape": [
+        1024,
+        2048
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 128
+    },
+    {
+      "name": "self_attn.q_norm.weight",
+      "shape": [
+        128
+      ],
+      "patch": [
+        128
+      ],
+      "tokens_per_source": 1
+    },
+    {
+      "name": "self_attn.k_norm.weight",
+      "shape": [
+        128
+      ],
+      "patch": [
+        128
+      ],
+      "tokens_per_source": 1
+    },
+    {
+      "name": "mlp.gate_proj.weight",
+      "shape": [
+        3072,
+        1024
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 192
+    },
+    {
+      "name": "mlp.up_proj.weight",
+      "shape": [
+        3072,
+        1024
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 192
+    },
+    {
+      "name": "mlp.down_proj.weight",
+      "shape": [
+        1024,
+        3072
+      ],
+      "patch": [
+        128,
+        128
+      ],
+      "tokens_per_source": 192
+    },
+    {
+      "name": "input_layernorm.weight",
+      "shape": [
+        1024
+      ],
+      "patch": [
+        128
+      ],
+      "tokens_per_source": 8
+    },
+    {
+      "name": "post_attention_layernorm.weight",
+      "shape": [
+        1024
+      ],
+      "patch": [
+        128
+      ],
+      "tokens_per_source": 8
+    }
+  ]
+}

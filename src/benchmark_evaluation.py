@@ -112,6 +112,8 @@ def prepare_benchmarks(cfg,lock,tokenizer):
                     raise ValueError(f'Full MGSM must score all 250 examples: {language}/{example["id"]} exceeds '
                                      'eval_context. Increase it within the model limit before freezing the protocol.')
             jobs.append(dict(benchmark=benchmark,language=language,examples=examples,
+                             requested_questions=cfg.pilot_questions if cfg.evaluation_mode=='pilot' else len(examples),
+                             count_reason='fewer eligible disjoint examples' if cfg.evaluation_mode=='pilot' and len(examples)<cfg.pilot_questions else 'requested count available',
                              fingerprint={k:v._fingerprint for k,v in ds.items()}))
             print('Prepared',benchmark,language,len(examples),flush=True)
     result=dict(protocol=protocol,jobs=jobs,signature=digest(dict(protocol=protocol,jobs=jobs)))

@@ -95,4 +95,7 @@ def export_best_nf4(source,merger,tokenizer,pairs,destination):
     verify_nf4(reloaded)
     if module_hash(reloaded)!=expected:raise RuntimeError('Saved NF4 weights changed on reload')
     size=sum(p.stat().st_size for p in destination.rglob('*') if p.is_file())
-    return reloaded,dict(serialized_bytes=size,weight_hash=expected,format='NF4 double quantization; embeddings, norms and lm_head FP16')
+    model_bytes=sum(p.stat().st_size for p in destination.glob('*.safetensors'))
+    return reloaded,dict(serialized_bytes=size,model_tensor_file_bytes=model_bytes,tokenizer_config_bytes=size-model_bytes,
+                         merged_parameters=sum(p.numel() for p in source.parameters())-sum(sum(p.numel() for p in source.model.layers[i].parameters()) for i in pairs),
+                         weight_hash=expected,format='NF4 double quantization; embeddings, norms and lm_head FP16')

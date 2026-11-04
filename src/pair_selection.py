@@ -60,3 +60,18 @@ def select_measured(rows,minimum_reduction=.4,comparable_tolerance=.01):
     best=min(r['ranking_ce'] for r in pool)
     comparable=[r for r in pool if r['ranking_ce']<=best+comparable_tolerance]
     return min(comparable,key=lambda r:(-len(r['pairs']),r['ranking_ce'],tuple(r['pairs'])))
+
+
+def select_feasible(rows,baseline_ce,maximum_relative=.20,minimum_reduction=.40):
+    """Deepest measured feasible plan; otherwise one lowest-CE learned diagnostic."""
+    if not np.isfinite(baseline_ce) or baseline_ce<=0:raise ValueError('Require positive finite baseline CE')
+    finite=[r for r in rows if np.isfinite(r['ranking_ce']) and valid_plan(r['pairs'])]
+    feasible=[r for r in finite if r['ranking_ce']<=baseline_ce*(1+maximum_relative) and r['reduction']>=minimum_reduction]
+    if not finite:raise ValueError('No finite learned candidate CE')
+    return min(feasible,key=lambda r:(-len(r['pairs']),r['ranking_ce'],tuple(r['pairs']))) if feasible else min(finite,key=lambda r:(r['ranking_ce'],-len(r['pairs']),tuple(r['pairs'])))
+
+
+def pareto_frontier(rows):
+    return [r for r in rows if not any(
+        q['ranking_ce']<=r['ranking_ce'] and len(q['pairs'])>=len(r['pairs']) and
+        (q['ranking_ce']<r['ranking_ce'] or len(q['pairs'])>len(r['pairs'])) for q in rows)]

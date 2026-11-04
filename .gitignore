@@ -6,3 +6,17 @@ outputs/**
 !outputs/.gitkeep
 *.zip
 .cache/
+
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.parquet
+*.arrow
+*.h5
+*.ckpt
+checkpoints/
+reference_models/
+model_exports/
+benchmark_results/
+training_cache/

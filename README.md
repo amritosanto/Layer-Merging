@@ -1,3 +1,30 @@
+# Ten-epoch CE-constrained Qwen3 merging
+
+Upload `Qwen3_10Epoch_CE20_Kaggle_Launcher.ipynb` to Kaggle, enable Internet and **T4 x2**, and run the cells in order. The notebook clones this repository and preserves installed CUDA PyTorch. It uses `config.smoke10.json` and a fresh output directory.
+
+Defaults: ten complete epochs with no step/time cap; seven languages from verified Wiki-40B/FineWeb2 configurations; **10,000 training, 3,000 validation and 2,048 ranking tokens per language**. Partial training windows are retained without duplication. Source revisions, content hashes and full experimental identities govern resume. The frozen FP16 teacher, six-block merger and objective are unchanged.
+
+```bash
+python run.py smoke --config config.smoke10.json
+# Or run prepare, preflight, train, search, export, benchmark, report separately:
+python run.py train --config config.smoke10.json
+```
+
+The search evaluates DP candidates at every merge count 1–14, with at most two additional surrogate refinements (16 whole plans total). At least one candidate per count receives true NF4 ranking CE in memory. Select the **most merged pairs** with relative NF4 CE increase `(merged-base)/base <= 0.20` and >=40% estimated storage reduction against original 16-bit storage; ties use lower CE then pair indices. Final serialized size verifies storage feasibility. If no plan qualifies, one lowest-CE learned diagnostic is exported and explicitly marked infeasible. Savings above 50% are welcome. This is the best evaluated plan, not a global optimum. Separate full validation uses all 3,000 tokens per language.
+
+`rankings/nf4_finalists.csv` includes accepted and rejected plans plus original NF4 (zero merges); `pareto_frontier.csv` and `charts/ce_compression_pareto.png` show non-dominated measured candidates. Surrogate CE and estimated storage are labeled separately from NF4 measurements and final serialized sizes. Only one learned NF4 checkpoint is exported.
+
+Benchmarks compare only original NF4 and learned NF4 with identical quantization, questions and prompts: 100 questions per language, prior three-language subsets, eight-shot MMMLU/INCLUDE/MGSM, and a 384-token MGSM generation cap. Counts, invalid/truncated rates, answer-position counts and paired bootstrap 95% accuracy-difference intervals are reported. The five-percentage-point accuracy diagnostic is independent of the 20% CE constraint. Benchmark results do not select the plan.
+
+Resume unchanged stages with the complete output directory; changed code/configuration requires a fresh experiment. Retain checkpoints, manifests, original NF4 reference and cached samples/predictions. A partial run is never labeled complete. Abrupt process termination resumes from the last persisted optimizer boundary; intervening uncommitted work may be repeated.
+
+The last notebook cell archives **all `/kaggle/working`** with ZIP64, excluding itself and storing model binaries without recompression. It requires a completed report by default; manually set `SALVAGE_PARTIAL=True` to archive an interrupted run. It attempts a browser download, which Kaggle/browser policies may block. The archive remains available under **Save Version / View Output**. Ensure sufficient free disk space for a second copy of working files; originals are not deleted.
+
+Local checks use tiny synthetic fixtures only. Full pretrained NF4 export, dual-T4 execution and benchmark accuracy remain unverified until Kaggle runs. No models or corpus shards are downloaded by local tests.
+
+---
+## Earlier five-epoch experiment
+
 # Five-epoch multilingual Qwen3 NF4 experiment
 
 Upload `Qwen3_5Epoch_Multilingual_NF4_Kaggle_Launcher.ipynb` to Kaggle, enable Internet, select **T4 x2**, and run its cells in order. It clones this repository, preserves Kaggle CUDA PyTorch, and installs binary wheels compatible with Python 3.13. Use the notebook dependency cell instead of the historical requirements.txt.

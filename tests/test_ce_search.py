@@ -64,10 +64,11 @@ def test_launcher_syntax():
     assert 'sentencepiece==' not in text and 'only-binary' in text
 
 
-def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch):
+@pytest.mark.parametrize('configuration,count',[('config.smoke.json',10),('config.smoke10.json',100)])
+def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch,configuration,count):
     from types import SimpleNamespace
     import src.benchmark_evaluation as b
-    cfg=Config.load('config.smoke.json'); cfg.output_dir=str(tmp_path)
+    cfg=Config.load(configuration); cfg.output_dir=str(tmp_path)
     # Tuple input must compare identically with JSON's cached lists.
     cfg.benchmark_languages['MMMLU']=('HI_IN','JA_JP')
     calls=[]
@@ -79,7 +80,7 @@ def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch):
             return dict(train=Split(dict(question=f'support {i}',answer_number=str(i),answer='reason '+str(i)) for i in range(8)),
                         test=Split(dict(question=f'test {i}',answer_number=str(i)) for i in range(250)))
         return dict(test=Split(dict(question=f'{language} question {i}',choices=['one','two'],label=i%2,
-                                    id=str(i),subject='s',domain='d',regional='r') for i in range(20)))
+                                    id=str(i),subject='s',domain='d',regional='r') for i in range(120)))
     monkeypatch.setattr(b,'load_dataset',load)
     monkeypatch.setattr(b,'get_dataset_config_names',lambda *a,**kw:['Hindi','Japanese','Albanian','Dutch-Flemish'])
     monkeypatch.setattr(b,'HfApi',lambda:SimpleNamespace(list_repo_files=lambda *a,**kw:[f'{lang}/test-0.parquet' for lang in ['Hindi','Japanese','Albanian']]))
@@ -89,7 +90,8 @@ def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch):
     lock=dict(model_revision='model',dataset_revisions={d:'revision' for d in ['openai/MMMLU',cfg.include_dataset,'juletxara/mgsm']})
     result=prepare_benchmarks(cfg,lock,tokenizer)
     assert len(calls)==9 and len(result['jobs'])==9
-    assert all(len(j['examples'])==10 for j in result['jobs'])
+    assert all(len(j['examples'])==count for j in result['jobs'])
     assert all(len(e['support_ids'])==8 for j in result['jobs'] if j['benchmark']=='MGSM' for e in j['examples'])
+    if count==100:assert all(len(e['support_ids'])==8 for j in result['jobs'] for e in j['examples'])
     assert prepare_benchmarks(cfg,lock,tokenizer)==result
     assert len(calls)==9  # Frozen prompt cache reused, no extra dataset loads.

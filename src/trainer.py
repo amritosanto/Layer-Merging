@@ -223,12 +223,13 @@ class AnchoredExperiment:
     def train(self):
         resumed=self.restore()
         if (self.out/'manifests/training_complete.json').exists():return
-        started=time.monotonic(); base=self.state['seconds']
+        started=time.monotonic(); base=self.state['seconds']; safe_checkpoint=True
         try:
             if not (self.out/'manifests/gpu_preflight.json').exists():self.preflight()
             self.tune_batch()
             if not self.validation:self.validate()
             self.state['last_validation']=base+time.monotonic()-started
+            self.save()  # Persist a boundary before any optimizer mutation.
             while self.state['epoch']<self.cfg.epochs:
                 windows=balanced_epoch(self.data,self.cfg.train_seq_len,self.cfg.seed,self.state['epoch'])
                 while self.state['cursor']<len(windows):
@@ -236,6 +237,9 @@ class AnchoredExperiment:
                     if (self.cfg.training_hours and elapsed>=self.cfg.training_hours*3600) or (self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps):break
                     step_start=time.monotonic(); cursor=self.state['cursor']; bs=self.state['batch_size']
                     stop=min(cursor+bs*self.cfg.gradient_accumulation,len(windows))
+                    for j in range(cursor+1,stop):
+                        if len(windows[j][1])!=len(windows[cursor][1]):
+                            stop=j; break
                     plan=task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs)
                     self.dual.sync(); self.dual.clear(); totals={}; work_total=[0]*len(self.dual.workers)
                     for d in range(len(work_total)):torch.cuda.reset_peak_memory_stats(d)
@@ -248,17 +252,21 @@ class AnchoredExperiment:
                         work_total=[a+b for a,b in zip(work_total,work)]
                     self.dual.reduce(); self.scaler.unscale_(self.optimizer)
                     norm=torch.nn.utils.clip_grad_norm_(self.merger.parameters(),self.cfg.clip_grad)
+                    safe_checkpoint=False
                     old_scale=self.scaler.get_scale(); self.scaler.step(self.optimizer); self.scaler.update()
                     if self.scaler.get_scale()<old_scale:
                         if self.scaler.get_scale()<1:raise FloatingPointError('Repeated AMP overflow; inspect source/losses')
+                        safe_checkpoint=True
                         continue  # Retry same cursor; no skipped examples.
                     self.dual.synchronize(); duration=max(time.monotonic()-step_start,1e-9)
                     self.state.update(step=self.state['step']+1,cursor=stop,seconds=base+time.monotonic()-started)
                     row=dict(**totals,grad_norm=float(norm),step=self.state['step'],epoch=self.state['epoch'],
-                             pairs=str(plan),global_batch=stop-cursor,seconds=duration,tokens_per_second=(stop-cursor)*self.cfg.train_seq_len/duration,
+                             pairs=str(plan),global_batch=stop-cursor,seconds=duration,tokens_per_second=sum(len(v) for _,v in windows[cursor:stop])/duration,
+                             token_counts=json.dumps({l:sum(len(v) for language,v in windows[cursor:stop] if language==l) for l in self.data}),
                              languages=json.dumps([l for l,_ in windows[cursor:stop]]))
                     for d,n in enumerate(work_total):row.update({f'gpu{d}_windows':n,f'gpu{d}_peak_bytes':torch.cuda.max_memory_allocated(d)})
-                    self.logs.append(row); print(f"Step {self.state['step']} loss={totals['loss']:.5f} pairs={plan}",flush=True)
+                    self.logs.append(row); safe_checkpoint=True
+                    print(f"Step {self.state['step']} loss={totals['loss']:.5f} pairs={plan}",flush=True)
                     if self.state['seconds']-self.state['last_validation']>=self.cfg.validation_interval_minutes*60:
                         self.validate(); self.state['last_validation']=base+time.monotonic()-started
                     if self.state['step']%self.cfg.save_every_steps==0:self.save()
@@ -271,12 +279,12 @@ class AnchoredExperiment:
             self.integrity()
             self.save()
             (self.out/'checkpoints/latest.pt').replace(self.out/'checkpoints/merger_final.pt')
-            atomic_json(dict(state=self.state,actual_training_tokens_per_language={l:sum(json.loads(r['languages']).count(l)*self.cfg.train_seq_len for r in self.logs) for l in self.data},metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
+            atomic_json(dict(state=self.state,stop_reason='epochs',actual_training_tokens_per_language={l:sum(json.loads(r['token_counts'])[l] for r in self.logs) for l in self.data},metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
             atomic_json(dict(state=self.state,signature=self.signature,stop_reason=('steps' if self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps else 'epochs' if self.state['epoch']==self.cfg.epochs else 'time_budget'),
                              checkpoint_sha256=file_digest(self.out/'checkpoints/merger_final.pt'),integrity_passed=True),self.out/'manifests/training_complete.json')
         finally:
             self.state['seconds']=base+time.monotonic()-started; self.dual.clear()
-            if not (self.out/'manifests/training_complete.json').exists():self.save()
+            if safe_checkpoint and not (self.out/'manifests/training_complete.json').exists():self.save()
 
     def rank_and_export(self):
         from .ce_search import search_and_export

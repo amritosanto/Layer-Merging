@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
-VERSION = 'qwen3-multilingual-nf4-v3'
+VERSION = 'qwen3-ce20-nf4-v4'
 
 @dataclass
 class Config:
@@ -18,6 +18,7 @@ class Config:
     max_candidate_plans: int = 12
     max_refinement_rounds: int = 2
     max_final_nf4_candidates: int = 3
+    max_relative_ce_increase: float = None  # None retains the earlier low-CE experiment.
     ce_comparable_tolerance: float = 0.01
     min_storage_reduction: float = 0.40
     target_storage_reduction: float = 0.50
@@ -79,6 +80,14 @@ class Config:
         assert 1 <= self.min_merged_pairs <= self.max_merged_pairs <= 14
         assert self.max_candidate_plans >= 1 and self.max_refinement_rounds >= 0
         assert self.max_optimizer_steps >= 0
+        if self.max_relative_ce_increase is not None:
+            assert 0 <= self.max_relative_ce_increase < float("inf")
+            levels=self.max_merged_pairs-self.min_merged_pairs+1
+            assert self.max_candidate_plans >= levels+self.max_refinement_rounds
+            assert self.max_final_nf4_candidates >= levels
+        assert self.train_seq_len >= 2 and self.pilot_questions > 0
+        assert self.save_every_steps > 0 and self.bootstrap_samples > 0
+        assert self.mgsm_few_shot == 8
         assert 1 <= self.max_final_nf4_candidates <= self.max_candidate_plans
         assert self.ce_comparable_tolerance >= 0 and self.mgsm_max_new_tokens > 0
         assert 0 < self.min_storage_reduction <= self.target_storage_reduction < 1

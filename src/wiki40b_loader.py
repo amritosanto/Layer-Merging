@@ -110,12 +110,21 @@ def prepare_data(cfg,tokenizer,revision):
 
 def balanced_epoch(data,seq_len,seed,epoch):
     """Round robin randomized language queues, no duplicated windows or padded updates."""
-    rng=np.random.default_rng(seed+epoch); queues={}
+    rng=np.random.default_rng(seed+epoch); groups={}
     for lang,parts in sorted(data.items()):
-        windows=torch.tensor(parts['train'][:len(parts['train'])//seq_len*seq_len]).reshape(-1,seq_len)
-        queues[lang]=[windows[i] for i in rng.permutation(len(windows))]
+        ids=torch.tensor(parts['train'])
+        windows=list(ids.split(seq_len))
+        # Avoid a one-token causal-loss window without duplicating any token.
+        if len(windows)>1 and len(windows[-1])==1:
+            tail=torch.cat(windows[-2:])
+            windows[-2:]=[tail[:-2],tail[-2:]]
+        for size in sorted({len(w) for w in windows},reverse=True):
+            matching=[w for w in windows if len(w)==size]
+            groups.setdefault(size,{})[lang]=[matching[i] for i in rng.permutation(len(matching))]
     result=[]
-    while any(queues.values()):
-        for lang in rng.permutation(sorted(queues)):
-            if queues[lang]:result.append((lang,queues[lang].pop()))
+    # Equal-length groups permit dense batches without padding or dropping tails.
+    for size,queues in sorted(groups.items(),reverse=True):
+        while any(queues.values()):
+            for lang in rng.permutation(sorted(queues)):
+                if queues[lang]:result.append((lang,queues[lang].pop()))
     return result

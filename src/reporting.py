@@ -159,7 +159,7 @@ def legacy_report(cfg):
                     ax.plot(g.layers,100*g.macro_accuracy,marker='o',label=f'Learned {suffix}')
                 baseline=a[a.variant=='original_'+suffix]
                 if len(baseline):ax.axhline(100*baseline.macro_accuracy.iloc[0],ls='--',label='Original '+suffix)
-            ax.set(title=benchmark+' — '+cfg.evaluation_mode,xlabel='Remaining decoder layers',ylabel='Macro accuracy (%)'); ax.legend()
+            ax.set(title=benchmark+' â€” '+cfg.evaluation_mode,xlabel='Remaining decoder layers',ylabel='Macro accuracy (%)'); ax.legend()
             save(fig,'B_F_compression_'+benchmark)
             if len(comparisons):
                 c=comparisons[(comparisons.benchmark==benchmark)&(comparisons.baseline=='original_nf4')&comparisons.variant.str.match(r'learned_\d_fp16')]
@@ -224,7 +224,16 @@ def make_report(cfg):
         keys=[k for k in reference if k[:2]==(benchmark,language) and not reference[k]['skip_reason']]
         if not keys:raise RuntimeError(f'No scored questions: {benchmark}/{language}')
         a=float(np.mean([reference[k]['correct'] for k in keys])); b=float(np.mean([learned[k]['correct'] for k in keys]))
+        ci=bootstrap_difference([learned[k]['correct'] for k in keys],[reference[k]['correct'] for k in keys],cfg.seed,cfg.bootstrap_samples) if len(keys)>1 else (None,None)
+        job=next(j for j in manifest['jobs'] if j['benchmark']==benchmark and j['language']==language)
         comparisons.append(dict(benchmark=benchmark,language=language,questions=len(keys),
+                                requested_questions=job.get('requested_questions',len(keys)),count_reason=job.get('count_reason',''),
+                                accuracy_delta_pp=100*(b-a),relative_delta_percent=100*(b-a)/a if a else None,
+                                paired_ci95_lower_pp=ci[0],paired_ci95_upper_pp=ci[1],
+                                original_invalid_rate=np.mean([reference[k]['invalid'] for k in keys]),
+                                learned_invalid_rate=np.mean([learned[k]['invalid'] for k in keys]),
+                                original_truncation_rate=np.mean([reference[k].get('truncated',False) for k in keys]),
+                                learned_truncation_rate=np.mean([learned[k].get('truncated',False) for k in keys]),
                                 original_nf4_correct=sum(reference[k]['correct'] for k in keys),learned_nf4_correct=sum(learned[k]['correct'] for k in keys),
                                 original_invalid=sum(reference[k]['invalid'] for k in keys),learned_invalid=sum(learned[k]['invalid'] for k in keys),
                                 original_truncated=sum(reference[k].get('truncated',False) for k in keys),learned_truncated=sum(learned[k].get('truncated',False) for k in keys),
@@ -235,7 +244,7 @@ def make_report(cfg):
             from collections import Counter
             for name,rows in records.items():
                 counts=Counter(rows[k]['prediction'] for k in keys)
-                for option,count in sorted(counts.items(),key=lambda x:str(x[0])):
+                for option,count in sorted({**{i:0 for i in range(4)},**counts}.items(),key=lambda x:str(x[0])):
                     frequencies.append(dict(benchmark=benchmark,language=language,variant=name,
                                             option=chr(65+option) if isinstance(option,int) else 'invalid',
                                             count=count,frequency=count/len(keys)))
@@ -252,7 +261,7 @@ def make_report(cfg):
     training=json.loads((out/'logs/training_metrics.json').read_text())
     coverage=json.loads((out/'manifests/language_coverage.json').read_text())
     sampled=[r for r in coverage if r['sampled']]
-    text=["# Five-epoch multilingual Qwen3 NF4 comparison",
+    text=["# Multilingual Qwen3 NF4 CE-constrained compression",
           f"Completed epochs: {selected['completed_epochs']}; optimizer updates: {selected['training_updates']}; training seconds: {training['state']['seconds']:.2f}.",
           f"Actual processed training tokens by language: {training['actual_training_tokens_per_language']}. Loss, teacher/student CE, distillation and correction metrics: logs/training_metrics.json.",
           f"Sampled sources: {[(r['language'],r['source'],r['config']) for r in sampled]}. Availability and exact/proxy/unavailable status for the official 119 entries (plus requested Yoruba) are in manifests/language_coverage.json. Availability is not a claim that all languages were trained.",
@@ -263,11 +272,26 @@ def make_report(cfg):
           f"Final serialized bytes: {selected['serialized_bytes']}; original NF4 bytes: {base['nf4_serialized_bytes']}; original FP16-width reference bytes: {base['reference_storage']['bytes']}.",
           f"Total saving vs FP16: {100*selected['actual_reduction']:.2f}%; additional saving vs original NF4: {100*selected['reduction_vs_original_nf4']:.2f}%. Quantization savings are not attributed to the merger.",
           f"At least 40% storage target met: {selected['storage_target_met']}; at least 50%: {selected['target_50_met']}. Savings above 50% are acceptable.",
+          f"CE threshold (relative ratio): {selected.get('max_relative_ce_increase')}; ranking CE target met: {selected.get('ce_target_met')}; combined CE/storage feasibility: {selected.get('feasible')}. Minimum measured relative CE increase: {selected.get('minimum_measured_relative_ce_increase')}. An infeasible selected model is diagnostic only.",
+          f"Model tensor file bytes: {selected.get('model_tensor_file_bytes')}; tokenizer/config bytes: {selected.get('tokenizer_config_bytes')}; merged parameters: {selected.get('merged_parameters')}. Candidate storage estimates and final serialized measurements are distinguished.",
+          'Pareto frontier and all measured NF4 candidates: rankings/pareto_frontier.csv and rankings/nf4_finalists.csv. ![CE compression](charts/ce_compression_pareto.png)',
           'FP16 storage reference: '+base['reference_storage']['basis']+'.',
           selected['format']+'. Both benchmark models use the same NF4 double-quantization/FP16-compute policy. FP16 teacher is restricted to training.',
           '## Pilot accuracy (macro over selected languages)',summary.to_csv(index=False),
           f"Observed five-percentage-point target met on every benchmark: {all(r['observed_target_met'] for r in aggregate)}. Negative degradation denotes improvement.",
           'Per-language correct counts, accuracies, absolute/relative degradation, invalid and truncated counts: per_language_accuracy.csv. Answer-option frequencies reuse the same predictions.',
-          'Limitations: ten-question language samples are preliminary and cannot establish a five-point threshold scientifically. CE does not guarantee accuracy; no acceptable performance is claimed solely from CE. Large losses are reported without benchmarking more candidates. Coverage proxies do not establish dedicated dialect training.']
+          'Limitations: pilot language samples are preliminary and cannot establish a five-point threshold scientifically. CE does not guarantee accuracy; no acceptable performance is claimed solely from CE. Large losses are reported without benchmarking more candidates. Coverage proxies do not establish dedicated dialect training.']
     report=out/'REPORT.md'; report.write_text('\n\n'.join(text)+'\n',encoding='utf-8')
     return report
+
+
+def plot_pareto(rows,selected,threshold,path):
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    fig,ax=plt.subplots(figsize=(8,5))
+    ax.scatter([len(r['pairs']) for r in rows],[r['relative_ce_increase_percent'] for r in rows],label='Measured NF4 candidates')
+    front=sorted([r for r in rows if r['on_pareto_frontier']],key=lambda r:len(r['pairs']))
+    ax.plot([len(r['pairs']) for r in front],[r['relative_ce_increase_percent'] for r in front],color='green',marker='o',label='Pareto frontier')
+    ax.scatter([len(selected['pairs'])],[selected['relative_ce_increase_percent']],marker='*',s=160,color='red',label='Selected learned plan')
+    if threshold is not None:ax.axhline(100*threshold,color='orange',linestyle='--',label=f'{100*threshold:g}% CE limit')
+    ax.set(xlabel='Merged adjacent pairs',ylabel='Relative NF4 CE increase (%)',title='Measured budget-limited CE/compression trade-off')
+    ax.legend();fig.tight_layout();fig.savefig(path,dpi=160);plt.close(fig)

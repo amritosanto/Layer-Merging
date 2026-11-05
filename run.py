@@ -5,10 +5,19 @@ import src
 from config import Config
 
 def main():
-    parser=argparse.ArgumentParser(); parser.add_argument('stage',choices=['smoke','search','export','prepare','preflight','train','rank-export','benchmark-preflight','benchmark','report','sft-prepare','sft-original','sft-merged','sft-verify','sft-both'])
+    parser=argparse.ArgumentParser(); parser.add_argument('stage',choices=['smoke','search','export','prepare','preflight','train','rank-export','benchmark-preflight','benchmark','report','sft-prepare','sft-original','sft-merged','sft-verify','sft-both','benchmark-worker'])
     parser.add_argument('--config',default='config.json'); parser.add_argument('--variant',default='all')
     parser.add_argument('--benchmark',choices=['MMMLU','INCLUDE','MGSM','all'],default='all')
+    parser.add_argument('--worker-rank',type=int,default=None)
     args=parser.parse_args(); cfg=Config.load(args.config)
+    if args.stage=='benchmark-worker':
+        if args.worker_rank is None or not 0<=args.worker_rank< (1 if cfg.single_gpu_debug else 2):
+            raise ValueError('benchmark-worker requires a valid --worker-rank')
+        if args.variant=='all':raise ValueError('benchmark-worker requires a single --variant')
+        import os
+        # Each evaluator must see only its own CUDA device, before any CUDA
+        # initialization. Parent benchmark process launches both concurrently.
+        os.environ['CUDA_VISIBLE_DEVICES']=str(args.worker_rank)
     if args.stage=='sft-both':
         import subprocess,sys,psutil,torch,os
         commands=[[sys.executable,__file__,stage,'--config',args.config] for stage in ('sft-original','sft-merged')]
@@ -89,7 +98,22 @@ def main():
     if args.variant!='all':
         specs=[v for v in specs if v['name']==args.variant]
         if not specs:raise ValueError('Unknown variant')
-    for spec in specs:evaluate_variant(cfg,lock,manifest,spec)
+    if args.stage=='benchmark' and not cfg.single_gpu_debug:
+        import subprocess,sys,os,torch
+        if torch.cuda.device_count()<2:raise RuntimeError('Benchmark requires T4 x2')
+        for spec in specs:
+            children=[]
+            for rank in range(2):
+                cmd=[sys.executable,__file__,'benchmark-worker','--config',args.config,
+                     '--variant',spec['name'],'--benchmark',args.benchmark,'--worker-rank',str(rank)]
+                env=os.environ.copy();env['CUDA_VISIBLE_DEVICES']=str(rank)
+                children.append(subprocess.Popen(cmd,env=env))
+            exit_codes=[child.wait() for child in children]
+            if any(exit_codes):raise RuntimeError(f'Isolated GPU benchmark workers failed: variant={spec["name"]}, codes={exit_codes}; completed prediction files are resumable')
+    else:
+        for spec in specs:
+            evaluate_variant(cfg,lock,manifest,spec,
+                worker_rank=args.worker_rank if args.stage=='benchmark-worker' else None)
 
 if __name__=='__main__':
     import sys,time

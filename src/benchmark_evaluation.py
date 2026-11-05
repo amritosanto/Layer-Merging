@@ -3,7 +3,6 @@ import hashlib
 import json
 import time
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import numpy as np
 import torch
@@ -213,18 +212,27 @@ def read_predictions(path):
             if i!=len(lines)-1:raise
     return rows
 
-def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
+def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False,worker_rank=None):
     if cfg.post_sft:
         from .sft_training import verified_specs
         if variant_spec not in verified_specs(cfg,lock):raise RuntimeError('Only verified post-SFT models may be evaluated')
     out=Path(cfg.output_dir); name=variant_spec['name']; needed=1 if cfg.single_gpu_debug else 2
-    if torch.cuda.device_count()<needed:raise RuntimeError('Benchmark evaluation requires two GPUs (or explicit debug mode)')
+    # In the two-GPU path run.py launches independent Python processes. In-process
+    # model-loading threads can interleave PEFT/Transformers meta initialization,
+    # leaving LoRA weights on the meta device. A worker sees exactly one GPU.
+    if worker_rank is not None:
+        if not 0<=worker_rank<needed:raise ValueError('Invalid physical worker rank')
+        if torch.cuda.device_count()!=1:raise RuntimeError('Benchmark worker must see exactly one CUDA device')
+    elif needed!=1:
+        raise RuntimeError('Two-GPU benchmark must use run.py benchmark (isolated worker processes)')
+    elif torch.cuda.device_count()<1:
+        raise RuntimeError('Benchmark requires a CUDA GPU')
     jobs=manifest['jobs']
     if smoke:
         jobs=[dict(next(j for j in jobs if j['benchmark']==b)) for b in ('MMMLU','INCLUDE','MGSM')]
         jobs=[dict(j,examples=[e for e in j['examples'] if not e['skip_reason']][:3]) for j in jobs]
     def work(rank):
-        device=f'cuda:{rank}'; torch.cuda.set_device(rank)
+        device='cuda:0'; torch.cuda.set_device(0)
         tok=AutoTokenizer.from_pretrained(cfg.model_id,revision=lock['model_revision'])
         if tok.pad_token_id is None:tok.pad_token=tok.eos_token
         if variant_spec.get('control'):
@@ -239,6 +247,10 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
             from .sft_training import load_inference
             model=load_inference(variant_spec,device)
         else:model=load_model(variant_spec['path'],variant_spec['revision'],device,variant_spec['nf4'])
+        # A meta parameter is never a valid trained inference weight. Fail before
+        # expensive hashing/inference instead of silently accepting a PEFT warning.
+        meta=[n for n,p in model.state_dict().items() if p.is_meta]
+        if meta:raise RuntimeError('Unmaterialized meta inference weights: '+', '.join(meta[:5]))
         if variant_spec['nf4']:
             verify_nf4(model)
         if cfg.eval_context>model.config.max_position_embeddings:raise ValueError('Evaluation context exceeds model capacity')
@@ -246,7 +258,7 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         from .utils import module_hash
         weight_hash=module_hash(model)
         identity=digest([manifest['signature'],variant_spec,weight_hash,'smoke' if smoke else 'evaluation'])
-        torch.cuda.reset_peak_memory_stats(rank); start=time.monotonic(); input_tokens=output_tokens=0
+        torch.cuda.reset_peak_memory_stats(0); start=time.monotonic(); input_tokens=output_tokens=0
         root=out/('preflight_predictions' if smoke else 'benchmark_results')/evaluation_namespace(cfg)/name; root.mkdir(parents=True,exist_ok=True)
         for job in jobs[rank::needed]:
             path=root/f"{job['benchmark']}_{job['language']}.jsonl"; old=read_predictions(path)
@@ -270,9 +282,9 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
                         stream.write(json.dumps(row,ensure_ascii=False,allow_nan=False)+'\n'); stream.flush()
                         if not e['skip_reason']:input_tokens+=len(e['input_ids']); output_tokens+=prediction['output_tokens']
             print(name,job['benchmark'],job['language'],'complete',flush=True)
-        torch.cuda.synchronize(rank); duration=time.monotonic()-start
+        torch.cuda.synchronize(0); duration=time.monotonic()-start
         stats=dict(variant=name,gpu=rank,benchmark=','.join(sorted({j['benchmark'] for j in jobs})),seconds=duration,new_input_tokens=input_tokens,new_output_tokens=output_tokens,
-                   tokens_per_second=(input_tokens+output_tokens)/max(duration,1e-9),peak_bytes=torch.cuda.max_memory_allocated(rank),
+                   tokens_per_second=(input_tokens+output_tokens)/max(duration,1e-9),peak_bytes=torch.cuda.max_memory_allocated(0),
                    layers=variant_spec['layers'],quantization='NF4' if variant_spec['nf4'] else 'FP16',weight_hash=weight_hash)
         # Parameters use original dense shapes, never 4-bit packed storage element counts.
         from transformers import AutoConfig,AutoModelForCausalLM
@@ -294,4 +306,6 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
             stats['tokens_per_second']=(stats['new_input_tokens']+stats['new_output_tokens'])/stats['seconds']
         atomic_json(stats,stat_path); del model; gc.collect(); torch.cuda.empty_cache()
         return stats
-    with ThreadPoolExecutor(max_workers=needed) as pool:return list(pool.map(work,range(needed)))
+    # Never load two independent Transformers/PEFT checkpoints in Python threads.
+    # run.py starts one isolated subprocess per physical T4.
+    return [work(worker_rank if worker_rank is not None else 0)]

@@ -1,0 +1,64 @@
+{
+  "mode": "smoke",
+  "output_dir": "/kaggle/working/outputs/eightblock_ce13_100k_20k_sft",
+  "epochs": 10,
+  "max_optimizer_steps": 0,
+  "training_hours": 0,
+  "train_seq_len": 128,
+  "train_tokens_per_language": 100000,
+  "validation_tokens_per_language": 20000,
+  "ranking_tokens_per_language": 4096,
+  "max_global_batch_size": 4,
+  "gradient_accumulation": 1,
+  "min_merged_pairs": 1,
+  "max_merged_pairs": 14,
+  "max_candidate_plans": 16,
+  "max_refinement_rounds": 2,
+  "evaluation_mode": "pilot",
+  "pilot_questions": 100,
+  "max_new_tokens": 128,
+  "seed": 42,
+  "validation_interval_minutes": 60,
+  "save_every_steps": 10,
+  "benchmark_languages": {
+    "MMMLU": [
+      "EN_US",
+      "HI_IN",
+      "JA_JP"
+    ],
+    "INCLUDE": [
+      "English",
+      "Hindi",
+      "Japanese"
+    ],
+    "MGSM": [
+      "en",
+      "bn",
+      "ja"
+    ]
+  },
+  "mgsm_max_new_tokens": 384,
+  "max_final_nf4_candidates": 14,
+  "min_storage_reduction": 0.4,
+  "target_storage_reduction": 0.5,
+  "training_languages": [
+    "English",
+    "Hindi",
+    "Japanese",
+    "Bengali",
+    "Swahili",
+    "Yoruba",
+    "Telugu"
+  ],
+  "max_relative_ce_increase": 0.13,
+  "mmmlu_few_shot": 8,
+  "include_few_shot": 8,
+  "mgsm_few_shot": 8,
+  "merger_blocks": 8,
+  "ce_reference": "original_fp16",
+  "post_sft": true,
+  "sft_epochs": 2,
+  "sft_lora_rank": 16,
+  "sft_learning_rate": 0.0002,
+  "sft_examples_per_language": 100
+}

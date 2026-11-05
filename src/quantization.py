@@ -115,6 +115,7 @@ def verify_nf4(model):
     for name,module in model.named_modules():
         if not name.startswith('model.layers.') or not name.endswith(('_proj',)):
             continue
+        if hasattr(module,'get_base_layer'):module=module.get_base_layer()  # Inference LoRA wrapper.
         if not isinstance(module,bnb.nn.Linear4bit) or not isinstance(module.weight,bnb.nn.Params4bit):
             raise RuntimeError(f'Eligible matrix is not NF4: {name}')
         state=module.weight.quant_state

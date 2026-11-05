@@ -288,10 +288,10 @@ def make_report(cfg):
 def plot_pareto(rows,selected,threshold,path):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     fig,ax=plt.subplots(figsize=(8,5))
-    ax.scatter([len(r['pairs']) for r in rows],[r['relative_ce_increase_percent'] for r in rows],label='Measured NF4 candidates')
+    ax.scatter([len(r['pairs']) for r in rows],[r['relative_ce_increase_percent'] for r in rows],label='Measured candidates / reference')
     front=sorted([r for r in rows if r['on_pareto_frontier']],key=lambda r:len(r['pairs']))
     ax.plot([len(r['pairs']) for r in front],[r['relative_ce_increase_percent'] for r in front],color='green',marker='o',label='Pareto frontier')
     ax.scatter([len(selected['pairs'])],[selected['relative_ce_increase_percent']],marker='*',s=160,color='red',label='Selected learned plan')
     if threshold is not None:ax.axhline(100*threshold,color='orange',linestyle='--',label=f'{100*threshold:g}% CE limit')
-    ax.set(xlabel='Merged adjacent pairs',ylabel='Relative NF4 CE increase (%)',title='Measured budget-limited CE/compression trade-off')
+    ax.set(xlabel='Merged adjacent pairs',ylabel='Relative CE increase vs '+str(rows[0].get('reference_precision','original_nf4'))+' (%)',title='Measured budget-limited CE/compression trade-off')
     ax.legend();fig.tight_layout();fig.savefig(path,dpi=160);plt.close(fig)

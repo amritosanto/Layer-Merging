@@ -46,7 +46,7 @@ def search_and_export(experiment,export=True):
         raise RuntimeError('Final checkpoint/run signature mismatch')
     e.merger.load_state_dict(saved['merger']); e.merger.eval(); e.dual.sync(); e.dual.clear()
     checkpoint_hash=module_hash(e.merger)
-    key=digest([e.signature,checkpoint_hash,e.data_manifest['token_digest'],'ce-search-ce20-v4'])
+    key=digest([e.signature,checkpoint_hash,e.data_manifest['token_digest'],'ce-search-reference-v5'])
     final_path=out/'manifests/final_export.json'
     if final_path.exists():
         final=json.loads(final_path.read_text())
@@ -70,6 +70,9 @@ def search_and_export(experiment,export=True):
         cache['baseline']=dict(nf4_ranking=baseline_ce('ranking'),nf4_validation=baseline_ce('validation'),
                                nf4_serialized_bytes=e.quant_manifest['nf4_serialized_bytes'],
                                source_ranking=e.score(partition='ranking')[0],reference_storage=reference)
+        cache['baseline']['reference_precision']=cfg.ce_reference
+        cache['baseline']['reference_ranking']=e.score(partition='ranking',model=e.teacher)[0] if cfg.ce_reference=='original_fp16' else cache['baseline']['nf4_ranking']
+        cache['baseline']['reference_validation']=e.score(partition='validation',model=e.teacher)[0] if cfg.ce_reference=='original_fp16' else cache['baseline']['nf4_validation']
         del baseline; torch.cuda.empty_cache(); flush()
     base=cache['baseline']; original_bytes=base['reference_storage']['bytes']
     def measure(plans):
@@ -93,7 +96,7 @@ def search_and_export(experiment,export=True):
         for plan in plans:
             ce=cache['plans'][','.join(map(str,plan))]; count,size=storage_estimate(e.source,plan)
             rows.append(dict(pairs=list(plan),merged_pairs=len(plan),remaining_layers=28-len(plan),ranking_ce=ce,
-                             ce_increase_original=ce-base['nf4_ranking'],ce_increase_source=ce-base['source_ranking'],
+                             ce_increase_original=ce-base['reference_ranking'],ce_increase_source=ce-base['source_ranking'],
                              estimated_parameters=count,estimated_nf4_bytes=size,reduction=1-size/original_bytes))
         return rows
     singles=measure([(i,) for i in range(27)])
@@ -138,24 +141,25 @@ def search_and_export(experiment,export=True):
             del final; torch.cuda.empty_cache(); flush()
         result=cache['nf4_plans'][plan_key]
         finalists.append(dict(candidate,surrogate_ranking_ce=candidate['ranking_ce'],ranking_ce=result['ce'],
-                              nf4_weight_hash=result['weight_hash'],ce_increase_original=result['ce']-base['nf4_ranking']))
+                              nf4_weight_hash=result['weight_hash'],ce_increase_original=result['ce']-base['reference_ranking']))
     threshold=cfg.max_relative_ce_increase
-    selected=(select_feasible(finalists,base['nf4_ranking'],threshold,cfg.min_storage_reduction) if threshold is not None
+    selected=(select_feasible(finalists,base['reference_ranking'],threshold,cfg.min_storage_reduction) if threshold is not None
               else select_measured(finalists,cfg.min_storage_reduction,cfg.ce_comparable_tolerance))
-    reference=dict(pairs=[],merged_pairs=0,remaining_layers=28,ranking_ce=base['nf4_ranking'],
+    reference=dict(pairs=[],merged_pairs=0,remaining_layers=28,ranking_ce=base['reference_ranking'],
                    estimated_parameters=sum(p.numel() for p in e.source.parameters()),
-                   estimated_nf4_bytes=base['nf4_serialized_bytes'],serialized_bytes=base['nf4_serialized_bytes'],
-                   reduction=1-base['nf4_serialized_bytes']/original_bytes)
+                   estimated_nf4_bytes=original_bytes if cfg.ce_reference=='original_fp16' else base['nf4_serialized_bytes'],
+                   serialized_bytes=original_bytes if cfg.ce_reference=='original_fp16' else base['nf4_serialized_bytes'],
+                   reduction=0. if cfg.ce_reference=='original_fp16' else 1-base['nf4_serialized_bytes']/original_bytes)
     frontier=pareto_frontier([reference]+finalists)
     for row in [reference]+finalists:
-        gap=row['ranking_ce']-base['nf4_ranking']
-        row.update(original_nf4_ce=base['nf4_ranking'],ce_increase_original=gap,
-                   relative_ce_increase=gap/base['nf4_ranking'],relative_ce_increase_percent=100*gap/base['nf4_ranking'],
+        gap=row['ranking_ce']-base['reference_ranking']
+        row.update(reference_ce=base['reference_ranking'],reference_precision=cfg.ce_reference,ce_increase_original=gap,
+                   relative_ce_increase=gap/base['reference_ranking'],relative_ce_increase_percent=100*gap/base['reference_ranking'],
                    perplexity=math.exp(min(row['ranking_ce'],700)),perplexity_ratio=math.exp(min(gap,700)),
                    reduction_vs_original_nf4=1-row['estimated_nf4_bytes']/base['nf4_serialized_bytes'],
-                   ce_target_met=threshold is None or row['ranking_ce']<=base['nf4_ranking']*(1+threshold),
+                   ce_target_met=threshold is None or row['ranking_ce']<=base['reference_ranking']*(1+threshold),
                    storage_target_met=row['reduction']>=cfg.min_storage_reduction,
-                   on_pareto_frontier=any(row is p for p in frontier),measurement='true NF4 CE',
+                   on_pareto_frontier=any(row is p for p in frontier),measurement='true NF4 CE' if row['pairs'] else cfg.ce_reference+' CE',
                    storage_basis='measured serialized' if not row['pairs'] else 'estimated serialized; selected export verified separately')
         row['feasible']=bool(row['pairs']) and row['ce_target_met'] and row['storage_target_met']
     pd.DataFrame([reference]+finalists).to_csv(out/'rankings/nf4_finalists.csv',index=False)
@@ -176,7 +180,7 @@ def search_and_export(experiment,export=True):
     if info['weight_hash']!=selected['nf4_weight_hash']:raise RuntimeError('Export differs from scored NF4 finalist')
     selected.update(info)
     selected['final_nf4_validation_ce']=float(np.mean([score_tokens(final,d['validation'],cfg) for d in e.data.values()]))
-    selected['final_nf4_ce_increase']=selected['final_nf4_validation_ce']-base['nf4_validation']
+    selected['final_nf4_ce_increase']=selected['final_nf4_validation_ce']-base['reference_validation']
     selected['actual_reduction']=1-info['serialized_bytes']/original_bytes
     selected['reduction_vs_original_nf4']=1-info['serialized_bytes']/base['nf4_serialized_bytes']
     selected['storage_target_met']=selected['actual_reduction']>=cfg.min_storage_reduction

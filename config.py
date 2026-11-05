@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
-VERSION = 'qwen3-ce20-nf4-v4'
+VERSION = 'qwen3-eight-block-sft-v5'
 
 @dataclass
 class Config:
@@ -18,6 +18,21 @@ class Config:
     max_candidate_plans: int = 12
     max_refinement_rounds: int = 2
     max_final_nf4_candidates: int = 3
+    ce_reference: str = 'original_nf4'
+    post_sft: bool = False
+    sft_dataset: str = 'CohereLabs/aya_dataset'
+    sft_revision: str = 'main'  # Resolved to SHA in the immutable run lock.
+    sft_epochs: int = 2
+    sft_lora_rank: int = 16
+    sft_lora_alpha: int = 32
+    sft_learning_rate: float = 2e-4
+    sft_examples_per_language: int = 100
+    sft_tokens_per_language: int = 50000  # Maximum; identical accepted tokens for both models.
+    sft_max_length: int = 512
+    sft_batch_size: int = 1
+    sft_gradient_accumulation: int = 4
+    sft_save_steps: int = 10
+    sft_near_duplicate_threshold: float = 0.45  # Conservative ambiguous-match rejection.
     max_relative_ce_increase: float = None  # None retains the earlier low-CE experiment.
     ce_comparable_tolerance: float = 0.01
     min_storage_reduction: float = 0.40
@@ -94,7 +109,16 @@ class Config:
         assert 0 <= self.accuracy_loss_target <= 1
         assert self.ce_weight == 0, 'Preserve hidden + KD + correction loss'
         assert self.merger_width % self.merger_heads == 0
-        assert self.merger_blocks == 6, 'This experiment preserves six weight-attention blocks.'
+        assert self.merger_blocks in (6,8)
+        assert self.ce_reference in ('original_nf4','original_fp16')
+        assert min(self.sft_epochs,self.sft_lora_rank,self.sft_lora_alpha,self.sft_examples_per_language,self.sft_tokens_per_language,self.sft_batch_size,self.sft_gradient_accumulation,self.sft_save_steps)>0
+        assert self.sft_max_length>=2 and self.sft_learning_rate>0
+        assert 0<self.sft_near_duplicate_threshold<=1
+        if self.post_sft:
+            assert self.merger_blocks==8 and self.ce_reference=='original_fp16'
+            assert self.merger_width==384 and self.merger_heads==6
+            assert self.max_relative_ce_increase is not None
+            assert self.sft_dataset=='CohereLabs/aya_dataset'
         assert self.evaluation_mode in ('pilot', 'full')
         assert self.wiki_backend in ('hf','tfds')
         assert self.gradient_accumulation >= 1 and self.temperature > 0

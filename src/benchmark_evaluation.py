@@ -37,7 +37,7 @@ def prepare_benchmarks(cfg,lock,tokenizer):
     protocol=dict(quantization=nf4_config().to_dict(),mgsm_max_new_tokens=cfg.mgsm_max_new_tokens,language_subset=cfg.benchmark_languages,experiment_mode=cfg.mode,mode=cfg.evaluation_mode,pilot=cfg.pilot_questions,seed=cfg.seed,
                   shots=[cfg.mmmlu_few_shot,cfg.include_few_shot,cfg.mgsm_few_shot],context=cfg.eval_context,
                   max_new_tokens=cfg.max_new_tokens,model_revision=lock['model_revision'],revisions=lock['dataset_revisions'],
-                  version='nf4-paired-first-complete-answer-v3',overflow='skip identical IDs for every variant; never truncate',
+                  version='paired-auditable-prompts-v4',post_sft=cfg.post_sft,overflow='skip identical IDs for every variant; never truncate',
                   mc_support='fixed stratified disjoint test support when no validation split; non-official protocol',
                   mgsm_alignment='same official row indices across languages; verify answer_number sequence')
     protocol=json.loads(json.dumps(protocol))
@@ -88,6 +88,7 @@ def prepare_benchmarks(cfg,lock,tokenizer):
                     if content_id(row) in support_hashes:raise AssertionError('MGSM demonstration/test leakage')
                     examples.append(dict(id=str(i),prompt=mgsm.prompt(support,row['question'],language),
                                          target=mgsm.normalized_number(row['answer_number']),choices=None,
+                                         audit_texts=[row['question'],str(row['answer_number']),row.get('answer','')]+[str(x[k]) for x in support for k in ('question','answer','answer_number') if k in x],
                                          subject='arithmetic',domain='math',regional='unknown',support_ids=[f'train:{j}' for j in range(shots)]))
             else:
                 tests=[adapter(r,i) for i,r in enumerate(ds['test'])]
@@ -102,6 +103,7 @@ def prepare_benchmarks(cfg,lock,tokenizer):
                 selected=eligible if cfg.evaluation_mode=='full' else stratified_sample(eligible,cfg.pilot_questions,cfg.seed)
                 examples=[dict(id=r['id'],prompt=mc_prompt(support,r),target=r['label'],choices=r['choices'],
                                subject=r['subject'],domain=r['domain'],regional=r['regional'],
+                               audit_texts=[r['question'],*r['choices']]+[text for x in support for text in [x['question'],*x['choices']]],
                                support_ids=[f'{support_split}:{s["id"]}' for s in support]) for r in selected]
             for example in examples:
                 example['input_ids']=tokenizer.encode(example['prompt'],add_special_tokens=False)
@@ -160,6 +162,9 @@ def generate_answers(model,tokenizer,examples,device,cfg,language):
 
 def variants(cfg,lock):
     out=Path(cfg.output_dir)
+    if cfg.post_sft:
+        from .sft_training import verified_specs
+        return verified_specs(cfg,lock)
     final=json.loads((out/'manifests/final_export.json').read_text())
     from .utils import file_digest
     if any(not (out/rel).is_file() or file_digest(out/rel)!=sha for rel,sha in final['files'].items()):
@@ -181,6 +186,9 @@ def read_predictions(path):
     return rows
 
 def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
+    if cfg.post_sft:
+        from .sft_training import verified_specs
+        if variant_spec not in verified_specs(cfg,lock):raise RuntimeError('Only verified post-SFT models may be evaluated')
     out=Path(cfg.output_dir); name=variant_spec['name']; needed=1 if cfg.single_gpu_debug else 2
     if torch.cuda.device_count()<needed:raise RuntimeError('Benchmark evaluation requires two GPUs (or explicit debug mode)')
     jobs=manifest['jobs']
@@ -199,8 +207,12 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
             if variant_spec['method']=='learned':
                 pairs=torch.load(out/'checkpoints/generated_pairs.pt',map_location='cpu',weights_only=True)['pairs']
             model=compress_in_place(model,variant_spec['pairs'],variant_spec['method'],pairs); del pairs
+        elif cfg.post_sft:
+            from .sft_training import load_inference
+            model=load_inference(variant_spec,device)
         else:model=load_model(variant_spec['path'],variant_spec['revision'],device,variant_spec['nf4'])
-        verify_nf4(model)
+        if variant_spec['nf4']:
+            verify_nf4(model)
         if cfg.eval_context>model.config.max_position_embeddings:raise ValueError('Evaluation context exceeds model capacity')
         # Hash actual tensors plus quantization metadata to invalidate changed checkpoint results.
         from .utils import module_hash
@@ -243,7 +255,7 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         stats['parameters']=sum(p.numel() for p in dense.parameters()); del dense
         final=json.loads((out/'manifests/final_export.json').read_text())
         if rank==0:
-            stats['stored_bytes']=(final['baseline']['nf4_serialized_bytes'] if name=='original_nf4'
+            stats['stored_bytes']=variant_spec['stored_bytes'] if cfg.post_sft else (final['baseline']['nf4_serialized_bytes'] if name=='original_nf4'
                                    else final['serialized_bytes'])
         stat_path=root/f'performance_gpu{rank}_{"-".join(sorted({j["benchmark"] for j in jobs}))}.json'
         if stat_path.exists():

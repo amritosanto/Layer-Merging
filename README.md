@@ -1,3 +1,32 @@
+# Eight-block merger with paired post-SFT evaluation
+
+Upload `Qwen3_8Block_CE13_100k_20k_SFT_Kaggle.ipynb` to Kaggle, enable Internet and **T4 x2**, then run its cells in order. It clones this repository, installs binary wheels including PEFT 0.15.2, and preserves CUDA PyTorch. Use `config.smoke_sft13.json` and its fresh output directory; six-block checkpoints are incompatible.
+
+The merger uses **eight** existing weight-attention blocks (width 384, six heads), unchanged anchored corrections and losses, and the frozen original FP16 teacher. Ten complete epochs use 100,000 training / 20,000 validation / 4,096 ranking tokens per language across the existing seven Wiki-40B/FineWeb2 languages. No step/time cap is imposed.
+
+CE selection uses `(merged NF4 CE - original FP16 CE) / original FP16 CE <= 0.13`, plus >=40% estimated storage reduction, verified on the selected export. Every merge depth 1–14 receives true NF4 CE; select the deepest feasible evaluated plan, then lower CE. These are **pre-SFT internal diagnostics**, not accuracy benchmarks; no global optimum is claimed. Infeasible diagnostic exports remain explicitly labeled.
+
+```bash
+python run.py prepare --config config.smoke_sft13.json
+# Other independent stages, in order:
+# preflight, train, search, export, sft-prepare, sft-original,
+# sft-merged, sft-verify, benchmark, report
+python run.py smoke --config config.smoke_sft13.json
+```
+
+`sft-prepare` freezes benchmark questions, answers and authentic few-shot supports for auditing only. It streams pinned `CohereLabs/aya_dataset` original annotations; rejects re-annotations/unknown provenance, benchmark-source markers, normalized exact overlaps and conservative character-shingle near/ambiguous matches. All seven language budgets must succeed. The audit fails closed and writes `manifests/sft_contamination_audit.json`, accepted IDs and one response-only token/label dataset shared by both fits. Lexical and available provenance checks cannot prove absence of semantic or translated contamination.
+
+Default SFT: two epochs, rank 16 / alpha 32, learning rate 2e-4, 100 accepted examples per language, maximum 50,000 tokens per language and 512 tokens per example. Oversize examples are rejected, not truncated. Budgets are configurable; actual accepted token counts are identical between models. Both fits use the same seed, schedule and response-only masking, without benchmark checkpoint selection. Original FP16 uses LoRA and exports merged FP16 weights; merged NF4 uses QLoRA and retains its separate adapter for inference. Storage includes that adapter. Each SFT stage uses one T4; merger training keeps dual-GPU execution. Complete optimizer checkpoints resume both fits; incomplete checkpoint writes are ignored.
+
+Only `original_fp16_sft` and `merged_nf4_sft` can be benchmarked, after both finish and `sft-verify` reloads them, checks precision/files/layers and runs synthetic inference. Both receive identical frozen prompts: 100 questions per language, eight-shot MMMLU/INCLUDE/MGSM, 384-token MGSM generation limit. The final language table includes correct counts, accuracy differences, retention, invalid/truncated rates and paired bootstrap intervals. The comparison includes **quantization, merging and SFT together**. The five-point accuracy diagnostic is separate from the 13% CE selection threshold.
+
+The last cell archives all `/kaggle/working` with ZIP64, excludes itself and attempts a browser download. If blocked, use **Save Version / View Output**. Set `SALVAGE_PARTIAL=True` only for manual partial-run recovery. Full checkpoints and adapters remain on disk. Resume with unchanged configuration/code and the complete output folder.
+
+Local checks use synthetic fixtures and tiny randomly initialized models only. No Qwen weights, Aya samples or corpus shards are downloaded locally; full dual-T4 training and pretrained NF4+adapter inference remain unverified until Kaggle execution.
+
+---
+## Earlier experiments
+
 # Ten-epoch CE-constrained Qwen3 merging
 
 Upload `Qwen3_10Epoch_CE20_Kaggle_Launcher.ipynb` to Kaggle, enable Internet and **T4 x2**, and run the cells in order. The notebook clones this repository and preserves installed CUDA PyTorch. It uses `config.smoke10.json` and a fresh output directory.

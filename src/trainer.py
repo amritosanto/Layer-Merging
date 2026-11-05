@@ -40,6 +40,7 @@ def prepare_run(cfg):
         return lock
     api=HfApi()
     revisions={name:api.dataset_info(name).sha for name in ('openai/MMMLU',cfg.include_dataset,'juletxara/mgsm')}
+    if cfg.post_sft:revisions[cfg.sft_dataset]=api.dataset_info(cfg.sft_dataset,revision=cfg.sft_revision).sha
     revisions[cfg.fineweb_dataset]=api.dataset_info(cfg.fineweb_dataset,revision=cfg.fineweb_revision).sha
     revisions[cfg.wiki_dataset]='tfds-wiki40b-1.3.0' if cfg.wiki_backend=='tfds' else api.dataset_info(cfg.wiki_dataset).sha
     lock=dict(version=VERSION,implementation=implementation,config=settings,model_revision=api.model_info(cfg.model_id,revision=cfg.model_revision).sha,

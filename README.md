@@ -1,3 +1,33 @@
+# Heavy multilingual SFT (seven-hour planning target)
+
+Use `Qwen3_8Block_HeavySFT_7Hour_Kaggle.ipynb` with Kaggle Internet and **T4 x2**. It clones this repo and uses `config.smoke_sft13.json` in a fresh `qwen3_8block_sft13_7h` output directory. CUDA PyTorch is preserved. Seven hours is a planning target, never a cutoff or promised runtime.
+
+The eight-block, width-384, six-head merger and losses are unchanged. Ten complete merger epochs use **10,000 / 3,000 / 2,048** training/validation/ranking tokens per language. Equal positive `merge_count_weights` balance depth 1–14 exposure; counts are logged. Progress validation uses a fixed 1,024-token prefix; final validation uses all 3,000. CE selection remains at most 13% above original FP16, with true NF4 measurements at every depth.
+
+Heavy SFT targets **900 training + 100 independent validation examples per language**, seven languages, two epochs. Targets: 40% original Aya annotations, 35% independent verified math word problems, 25% project-authored numeric academic MC (arithmetic, geometry, motion, probability). Generated correct positions are balanced after screening. This numeric curriculum is not a broad factual academic corpus. Aya shortfalls are recorded and reallocated proportionally to verified math/MC; inability to fill total quotas stops SFT. Examples are never duplicated to fill quotas or silently truncated.
+
+Every candidate is audited against frozen benchmark questions/options/answers/supports using normalized hashes, character-shingle similarity and conservative numeric fingerprints for possible translations. Benchmark-source markers and unknown Aya provenance are rejected. The audit addresses detectable added-SFT overlap, not historical pretraining or undetectable semantic contamination. Accepted training/validation IDs, rejected records, actual composition and pinned sources are recorded under `sft/`. Arabic and Albanian benchmark languages receive no dedicated SFT; their prior effective subsets are now explicit, replacing unavailable-English fallbacks.
+
+Both variants share examples, response masks, an independent deterministic epoch sampler, rank 16 / alpha 32 / dropout .05, learning rate 2e-4, accumulation four and sequence limit 512. A longest-sequence GPU preflight tests the common microbatch and reserves optimizer memory. Per-language validation loss is recorded each epoch without benchmark checkpoint selection. Original inference is merged FP16; compressed inference is NF4 plus its separately counted QLoRA adapter.
+
+```bash
+python run.py smoke --config config.smoke_sft13.json
+# Independent stages: prepare, preflight, train, search, export, sft-prepare,
+# sft-original, sft-merged, sft-verify, benchmark, report
+python run.py sft-both --config config.smoke_sft13.json
+```
+
+`sft-both` trains concurrently on separate GPUs when two GPUs and at least 12 GiB free host memory are available; otherwise sequentially. Checkpoints restore optimizer, scheduler, RNG and exposure counts. Resume with unchanged code/config and all artifacts retained; new settings require a fresh identity. Only verified `original_fp16_sft` and `merged_nf4_sft` are benchmarked. Their accuracy difference combines quantization, merging and SFT.
+
+Reports include correct/incorrect/invalid/truncated counts, paired intervals, option frequencies, label-score margins and charts; an >=80% dominant-option flag diagnoses possible option collapse. Required CSVs are mirrored under `benchmark_results/`, with `rankings/ce_compression_frontier.png`. Storage separates inference files, adapters and architecture parameters. Runtime estimates and actual throughput/memory are recorded, not fabricated.
+
+The last cell checks disk capacity and archives all working files into `Qwen3_8Block_HeavySFT_WORKING.zip` with ZIP64, excluding itself and storing model binaries without recompression. It prints file count/size and attempts browser download. Use **Save Version / View Output** if blocked, or `SALVAGE_PARTIAL=True` for manual recovery. Source artifacts remain intact.
+
+Local tests use synthetic fixtures and tiny models only. No pretrained weights or datasets are downloaded locally. Full T4 execution, runtime and model quality remain unverified.
+
+---
+## Earlier instructions (superseded defaults)
+
 # Eight-block merger with paired post-SFT evaluation
 
 Upload `Qwen3_8Block_CE13_100k_20k_SFT_Kaggle.ipynb` to Kaggle, enable Internet and **T4 x2**, then run its cells in order. It clones this repository, installs binary wheels including PEFT 0.15.2, and preserves CUDA PyTorch. Use `config.smoke_sft13.json` and its fresh output directory; six-block checkpoints are incompatible.

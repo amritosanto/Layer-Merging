@@ -39,12 +39,17 @@ def make_sft_report(cfg):
                  relative_accuracy_retention=ba/aa if aa else None,paired_ci95_lower_pp=ci[0],paired_ci95_upper_pp=ci[1],
                  accuracy_diagnostic_met=aa-ba<=cfg.accuracy_loss_target)
         for name,records in zip(NAMES,paired):
+            row[name+'_incorrect']=len(keys)-sum(records[k]['correct'] for k in keys)
             row[name+'_invalid']=sum(records[k]['invalid'] for k in keys)
             row[name+'_truncated']=sum(records[k].get('truncated',False) for k in keys)
             row[name+'_invalid_rate']=row[name+'_invalid']/len(keys)
             row[name+'_truncation_rate']=row[name+'_truncated']/len(keys)
             if job['benchmark']!='MGSM':
                 counts=Counter(records[k]['prediction'] for k in keys)
+                margins=[sorted(records[k]['scores'])[-1]-sorted(records[k]['scores'])[-2] for k in keys if len(records[k].get('scores',[]))>=2]
+                row[name+'_mean_label_score_margin']=float(np.mean(margins)) if margins else None
+                row[name+'_dominant_option_fraction']=max(counts.values())/len(keys)
+                row[name+'_option_collapse_flag']=max(counts.values())/len(keys)>=.8
                 for option,count in {**{i:0 for i in range(4)},**counts}.items():
                     frequencies.append(dict(benchmark=job['benchmark'],language=job['language'],variant=name,
                                             option=chr(65+option) if isinstance(option,int) else 'invalid',count=count,frequency=count/len(keys)))
@@ -59,8 +64,28 @@ def make_sft_report(cfg):
     summary=pd.DataFrame(aggregate);summary.to_csv(root/'accuracy_comparison.csv',index=False)
     selected=json.loads((out/'manifests/final_export.json').read_text())
     audit=json.loads((out/'manifests/sft_contamination_audit.json').read_text())
-    storage=pd.DataFrame([dict(variant=s['name'],serialized_bytes=s['stored_bytes'],adapter_bytes=s['adapter_bytes'],remaining_layers=s['layers']) for s in specs])
+    storage=pd.DataFrame([dict(variant=s['name'],serialized_bytes=s['stored_bytes'],adapter_bytes=s['adapter_bytes'],remaining_layers=s['layers'],removed_layers=28-s['layers'],architecture_parameters=s.get('architecture_parameters'),trainable_adapter_parameters=s.get('trainable_adapter_parameters')) for s in specs])
     storage.to_csv(root/'post_sft_storage.csv',index=False)
+    frame[['benchmark','language','questions','paired_ci95_lower_pp','paired_ci95_upper_pp']].to_csv(root/'paired_confidence_intervals.csv',index=False)
+    performance=[]
+    for spec in specs:
+        for p in (root/spec['name']).glob('performance_*.json'):
+            performance.append(dict(kind='benchmark',**json.loads(p.read_text())))
+        metrics=out/'sft'/spec['name']/'training_metrics.json'
+        if metrics.exists():
+            steps=json.loads(metrics.read_text())['exposure']['steps'];seconds=sum(r['seconds'] for r in steps);tokens=sum(r['tokens'] for r in steps)
+            performance.append(dict(kind='SFT optimizer steps only',variant=spec['name'],seconds=seconds,new_input_tokens=tokens,
+                tokens_per_second=tokens/max(seconds,1e-9),optimizer_steps=len(steps),mean_step_seconds=seconds/max(len(steps),1),peak_bytes=max((r['peak_bytes'] for r in steps),default=0)))
+    pd.DataFrame(performance).to_csv(root/'performance_summary.csv',index=False)
+    from .reporting import plt
+    fig,ax=plt.subplots(figsize=(11,5));x=np.arange(len(frame))
+    ax.bar(x-.18,100*frame.original_fp16_sft_accuracy,.36,label='Original FP16 SFT')
+    ax.bar(x+.18,100*frame.merged_nf4_sft_accuracy,.36,label='Merged NF4 SFT')
+    ax.set_xticks(x,[r.benchmark+'/'+r.language for r in frame.itertuples()],rotation=40,ha='right');ax.set_ylabel('Accuracy (%)');ax.legend();fig.tight_layout()
+    (out/'charts').mkdir(exist_ok=True);fig.savefig(out/'charts/post_sft_accuracy.png',dpi=160);plt.close(fig)
+    import shutil
+    for name in ('accuracy_comparison.csv','per_language_accuracy.csv','answer_option_frequencies.csv','paired_confidence_intervals.csv','performance_summary.csv'):
+        shutil.copyfile(root/name,out/'benchmark_results'/name)
     text=['# Eight-block merger: post-SFT FP16 versus NF4',
           'This comparison includes the combined effects of quantization, merging, and SFT. It does not isolate the effect of layer merging.',
           f"Merger training: {selected['completed_epochs']} epochs, {selected['training_updates']} optimizer updates. Eight weight-attention blocks; old six-block checkpoints are incompatible.",
@@ -69,6 +94,10 @@ def make_sft_report(cfg):
           f"Selected pairs={selected['pairs']}; remaining layers={selected['remaining_layers']}. Search is budget-limited, not a global optimum. Pre-SFT savings vs original 16-bit={100*selected['actual_reduction']:.2f}%; vs original NF4={100*selected['reduction_vs_original_nf4']:.2f}%.",
           f"Both SFT models used {cfg.sft_epochs} complete epochs, rank {cfg.sft_lora_rank}, learning rate {cfg.sft_learning_rate}, the same accepted IDs and response-only labels. Accepted examples/language={audit['examples_per_language']}; tokens/language/epoch={audit['tokens_per_language']}.",
           'Contamination exclusions and provenance: manifests/sft_contamination_audit.json. '+audit['limitations'],
+          f"SFT composition and shortfalls: {audit.get('actual_allocation')}; Aya shortfalls: {audit.get('aya_shortfalls')}. Arabic and Albanian benchmark languages received no dedicated SFT.",
+          f"Architecture-level parameter reduction: {1-specs[1]['architecture_parameters']/specs[0]['architecture_parameters'] if specs[0].get('architecture_parameters') and specs[1].get('architecture_parameters') else 'unavailable'}. Pre-SFT perplexity ratio: {selected.get('perplexity_ratio')}.",
+          'Seven hours is a planning target, not a measured completion claim or cutoff. Observed timing, throughput and memory are in performance_summary.csv and SFT preflight/training metrics. Per-language validation losses use the independent SFT validation partition; no benchmark-based checkpoint selection.',
+          '![Post-SFT language accuracy](charts/post_sft_accuracy.png)',
           '## Language accuracy',frame.to_csv(index=False),'## Macro aggregate accuracy',summary.to_csv(index=False),
           'Accuracy differences and paired confidence intervals are percentage points (merged minus original); retention is a ratio and undefined for zero baseline accuracy. The five-point accuracy diagnostic is separate from the 13% relative CE constraint.',
           '## Final inference storage',storage.to_csv(index=False),

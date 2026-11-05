@@ -8,7 +8,7 @@ from datasets import load_dataset
 from .utils import atomic_json,digest
 
 LANGUAGES={'English':'eng','Hindi':'hin','Japanese':'jpn','Bengali':'ben','Swahili':'swa','Yoruba':'yor','Telugu':'tel'}
-PROTOCOL='aya-original-audit-response-only-v1'
+PROTOCOL='audited-multilingual-mixture-v2'
 
 
 def normalized(text):
@@ -21,6 +21,8 @@ def shingles(text):
 
 class ContaminationIndex:
     def __init__(self,texts,threshold):
+        def numbers(t):return tuple(sorted(re.findall(r'\d+(?:[.,]\d+)?',unicodedata.normalize('NFKC',str(t)))))
+        self.numeric={numbers(t) for t in texts if len(numbers(t))>=3}
         self.texts=sorted({normalized(t) for t in texts if normalized(t)})
         if not self.texts:raise RuntimeError('Empty benchmark contamination index')
         self.exact={digest(t) for t in self.texts};self.threshold=threshold
@@ -29,6 +31,8 @@ class ContaminationIndex:
             for gram in grams:self.index[gram].add(i)
 
     def match(self,text):
+        numbers=tuple(sorted(re.findall(r'\d+(?:[.,]\d+)?',unicodedata.normalize('NFKC',str(text)))))
+        if len(numbers)>=3 and numbers in self.numeric:return 'ambiguous_numeric_translation'
         value=normalized(text)
         if digest(value) in self.exact:return 'exact_normalized_hash'
         grams=shingles(value);candidates=Counter(i for g in grams for i in self.index.get(g,()))
@@ -40,7 +44,7 @@ class ContaminationIndex:
 
 
 def response_tokens(tokenizer,prompt,response,max_length):
-    prefix=tokenizer.encode('Instruction:\n'+prompt+'\n\nResponse:\n',add_special_tokens=False)
+    prefix=tokenizer.encode(prompt if prompt.endswith('Answer:') else 'Instruction:\n'+prompt+'\n\nResponse:\n',add_special_tokens=False)
     answer=tokenizer.encode(response,add_special_tokens=False)+[tokenizer.eos_token_id]
     if not prefix or len(answer)<2 or len(prefix)+len(answer)>max_length:return None
     return dict(input_ids=prefix+answer,labels=[-100]*len(prefix)+answer)
@@ -60,6 +64,9 @@ def load_prepared(cfg,lock,manifest):
 
 
 def prepare_sft(cfg,lock,tokenizer,manifest):
+    if cfg.sft_mixture:
+        from .sft_mixture import prepare_mixture
+        return prepare_mixture(cfg,lock,tokenizer,manifest)
     out=Path(cfg.output_dir);path=out/'manifests/sft_contamination_audit.json'
     if path.exists() and json.loads(path.read_text()).get('complete'):
         return load_prepared(cfg,lock,manifest)

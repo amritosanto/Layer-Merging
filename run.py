@@ -5,10 +5,22 @@ import src
 from config import Config
 
 def main():
-    parser=argparse.ArgumentParser(); parser.add_argument('stage',choices=['smoke','search','export','prepare','preflight','train','rank-export','benchmark-preflight','benchmark','report','sft-prepare','sft-original','sft-merged','sft-verify'])
+    parser=argparse.ArgumentParser(); parser.add_argument('stage',choices=['smoke','search','export','prepare','preflight','train','rank-export','benchmark-preflight','benchmark','report','sft-prepare','sft-original','sft-merged','sft-verify','sft-both'])
     parser.add_argument('--config',default='config.json'); parser.add_argument('--variant',default='all')
     parser.add_argument('--benchmark',choices=['MMMLU','INCLUDE','MGSM','all'],default='all')
     args=parser.parse_args(); cfg=Config.load(args.config)
+    if args.stage=='sft-both':
+        import subprocess,sys,psutil,torch
+        commands=[[sys.executable,__file__,stage,'--config',args.config] for stage in ('sft-original','sft-merged')]
+        if not cfg.single_gpu_debug and torch.cuda.device_count()>=2 and psutil.virtual_memory().available>=12*2**30:
+            print('Running paired SFT concurrently on separate GPUs',flush=True)
+            processes=[subprocess.Popen(command) for command in commands]
+            codes=[process.wait() for process in processes]
+            if any(codes):raise RuntimeError(f'Paired SFT interrupted/failed: {codes}; rerun individual stages to resume')
+        else:
+            print('Running paired SFT sequentially: concurrent host/GPU capacity check not satisfied',flush=True)
+            for command in commands:subprocess.run(command,check=True)
+        return
     if args.stage in ('sft-original','sft-merged'):
         import os
         # One independent adapter fit per stage, avoiding QLoRA DataParallel.
@@ -16,7 +28,7 @@ def main():
     if args.stage=='smoke':
         if cfg.mode!='smoke':raise ValueError('Use config.smoke.json for the smoke command')
         import subprocess,sys
-        stages=['train','search','export']+(['sft-prepare','sft-original','sft-merged','sft-verify'] if cfg.post_sft else [])+['benchmark','report']
+        stages=['train','search','export']+(['sft-prepare','sft-both','sft-verify'] if cfg.post_sft else [])+['benchmark','report']
         for stage in stages:
             subprocess.run([sys.executable,__file__,stage,'--config',args.config],check=True)
         return

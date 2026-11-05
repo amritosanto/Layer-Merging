@@ -205,19 +205,20 @@ class AnchoredExperiment:
         if not safe:raise RuntimeError('No safe maximum-merge batch. Reduce sequence length in a new run; inspect GPU allocations.')
         self.state['batch_size']=max(safe,key=lambda r:(r['tokens_per_second'],r['batch']))['batch']
 
-    def score(self,pairs=(),method='learned',partition='validation',model=None):
+    def score(self,pairs=(),method='learned',partition='validation',model=None,token_limit=0):
         with torch.autocast('cuda',dtype=torch.float16),variant(model or self.source,self.merger,pairs,method) as m:
-            per_lang={lang:score_tokens(m,data[partition],self.cfg) for lang,data in self.data.items()}
+            per_lang={lang:score_tokens(m,data[partition][:token_limit] if token_limit else data[partition],self.cfg) for lang,data in self.data.items()}
         return float(np.mean(list(per_lang.values()))),per_lang
 
-    def validate(self):
+    def validate(self,full=False):
         self.merger.eval()
-        teacher=self.score(model=self.teacher)[0]
+        limit=0 if full else self.cfg.merger_progress_validation_tokens
+        teacher=self.score(model=self.teacher,token_limit=limit)[0]
         # One deterministic representative plan, not a sweep over all levels.
         plan=tuple(range(0,2*min(3,self.cfg.max_merged_pairs),2))
-        ce=self.score(plan)[0]
+        ce=self.score(plan,token_limit=limit)[0]
         row=dict(step=self.state['step'],epoch=self.state['epoch'],teacher_ce=teacher,
-                 validation_ce=ce,selection_ce_gap=ce-teacher)
+                 validation_ce=ce,selection_ce_gap=ce-teacher,validation_tokens_per_language=limit or self.cfg.validation_tokens_per_language)
         self.validation.append(row); self.state['best']=ce
         self.merger.train(); print('Validation:',row,flush=True)
 
@@ -241,7 +242,7 @@ class AnchoredExperiment:
                     for j in range(cursor+1,stop):
                         if len(windows[j][1])!=len(windows[cursor][1]):
                             stop=j; break
-                    plan=task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs)
+                    plan=task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs,weights=self.cfg.merge_count_weights)
                     self.dual.sync(); self.dual.clear(); totals={}; work_total=[0]*len(self.dual.workers)
                     for d in range(len(work_total)):torch.cuda.reset_peak_memory_stats(d)
                     for begin in range(cursor,stop,bs):
@@ -262,7 +263,7 @@ class AnchoredExperiment:
                     self.dual.synchronize(); duration=max(time.monotonic()-step_start,1e-9)
                     self.state.update(step=self.state['step']+1,cursor=stop,seconds=base+time.monotonic()-started)
                     row=dict(**totals,grad_norm=float(norm),step=self.state['step'],epoch=self.state['epoch'],
-                             pairs=str(plan),global_batch=stop-cursor,seconds=duration,tokens_per_second=sum(len(v) for _,v in windows[cursor:stop])/duration,
+                             pairs=str(plan),merge_count=len(plan),global_batch=stop-cursor,seconds=duration,tokens_per_second=sum(len(v) for _,v in windows[cursor:stop])/duration,
                              token_counts=json.dumps({l:sum(len(v) for language,v in windows[cursor:stop] if language==l) for l in self.data}),
                              languages=json.dumps([l for l,_ in windows[cursor:stop]]))
                     for d,n in enumerate(work_total):row.update({f'gpu{d}_windows':n,f'gpu{d}_peak_bytes':torch.cuda.max_memory_allocated(d)})
@@ -275,12 +276,13 @@ class AnchoredExperiment:
                 self.state['epoch']+=1; self.state['cursor']=0; self.validate(); self.save()
             if self.state['epoch']<self.cfg.epochs:
                 raise RuntimeError(f"Training incomplete: {self.state['epoch']}/{self.cfg.epochs} epochs; checkpoint saved for resume. Increase/disable the time or step cap.")
-            if self.validation[-1]['step']!=self.state['step']:self.validate()
+            if self.cfg.merger_progress_validation_tokens:self.validate(full=True)
+            elif self.validation[-1]['step']!=self.state['step']:self.validate()
             self.state['seconds']=base+time.monotonic()-started
             self.integrity()
             self.save()
             (self.out/'checkpoints/latest.pt').replace(self.out/'checkpoints/merger_final.pt')
-            atomic_json(dict(state=self.state,stop_reason='epochs',actual_training_tokens_per_language={l:sum(json.loads(r['token_counts'])[l] for r in self.logs) for l in self.data},metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
+            atomic_json(dict(state=self.state,stop_reason='epochs',merge_count_updates={str(k):sum(r['merge_count']==k for r in self.logs) for k in range(self.cfg.min_merged_pairs,self.cfg.max_merged_pairs+1)},actual_training_tokens_per_language={l:sum(json.loads(r['token_counts'])[l] for r in self.logs) for l in self.data},metrics=self.logs,validation=self.validation),self.out/'logs/training_metrics.json')
             atomic_json(dict(state=self.state,signature=self.signature,stop_reason=('steps' if self.cfg.max_optimizer_steps and self.state['step']>=self.cfg.max_optimizer_steps else 'epochs' if self.state['epoch']==self.cfg.epochs else 'time_budget'),
                              checkpoint_sha256=file_digest(self.out/'checkpoints/merger_final.pt'),integrity_passed=True),self.out/'manifests/training_complete.json')
         finally:

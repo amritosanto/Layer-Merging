@@ -20,3 +20,6 @@ reference_models/
 model_exports/
 benchmark_results/
 training_cache/
+
+sft/
+*.zip.tmp

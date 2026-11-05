@@ -2,6 +2,7 @@
 import gc
 import json
 import math
+import time
 from pathlib import Path
 import torch
 from .utils import atomic_json,digest,file_digest,seed_all,module_hash
@@ -9,6 +10,15 @@ from .quantization import load_model,verify_nf4
 from .sft_data import load_prepared
 
 NAMES=('original_fp16_sft','merged_nf4_sft')
+
+
+class PairedSampler(torch.utils.data.Sampler):
+    """Order independent of model depth, dropout RNG and other global RNG use."""
+    def __init__(self,data,seed):self.data=data;self.seed=seed;self.epoch=0
+    def set_epoch(self,epoch):self.epoch=epoch
+    def __len__(self):return len(self.data)
+    def __iter__(self):
+        return iter(torch.randperm(len(self.data),generator=torch.Generator().manual_seed(self.seed+self.epoch)).tolist())
 
 
 def file_map(root,folder):
@@ -50,7 +60,7 @@ def context(cfg,lock,manifest):
     final=json.loads((out/'manifests/final_export.json').read_text())
     check_files(out,final['files'])
     if final['completed_epochs']!=cfg.epochs:raise RuntimeError('Incomplete merger training')
-    identity=digest([lock,audit['identity'],audit['accepted_digest'],final['files'],'paired-sft-v1'])
+    identity=digest([lock,audit['identity'],audit['accepted_digest'],final['files'],'paired-heavy-sft-v2'])
     return out,data,audit,final,identity
 
 
@@ -62,6 +72,20 @@ def complete_checkpoint(directory):
             record=json.loads(marker.read_text())
             if all((p/name).is_file() and file_digest(p/name)==sha for name,sha in record['files'].items()):candidates.append(p)
     return str(max(candidates,key=lambda p:int(p.name.split('-')[-1]))) if candidates else None
+
+
+def exposure_trainer_class(cfg,exposure):
+    from transformers import Trainer
+    class ExposureTrainer(Trainer):
+        def _get_train_sampler(self):return PairedSampler(self.train_dataset,cfg.seed)
+        def training_step(self,model,inputs,num_items_in_batch=None):
+            languages=inputs.pop('_languages');counts=inputs['attention_mask'].sum(1).tolist()
+            loss=super().training_step(model,inputs,num_items_in_batch)
+            if not torch.isfinite(loss):raise RuntimeError('Nonfinite SFT training loss')
+            for language,count in zip(languages,counts):
+                exposure['tokens'][language]+=int(count);exposure['examples'][language]+=1
+            return loss
+    return ExposureTrainer
 
 
 def train_sft(cfg,lock,tokenizer,manifest,name):
@@ -78,36 +102,90 @@ def train_sft(cfg,lock,tokenizer,manifest,name):
     seed_all(cfg.seed);nf4=name=='merged_nf4_sft'
     model=load_model(str(out/'model_exports/best_learned_nf4') if nf4 else cfg.model_id,
                      None if nf4 else lock['model_revision'],'cuda:0',nf4)
-    if nf4:model=prepare_model_for_kbit_training(model,use_gradient_checkpointing=True,gradient_checkpointing_kwargs={'use_reentrant':False})
+    if nf4:model=prepare_model_for_kbit_training(model,use_gradient_checkpointing=cfg.sft_gradient_checkpointing,gradient_checkpointing_kwargs={'use_reentrant':False})
     else:model.enable_input_require_grads()
     model.config.use_cache=False
-    model=get_peft_model(model,LoraConfig(r=cfg.sft_lora_rank,lora_alpha=cfg.sft_lora_alpha,lora_dropout=0.,
+    model=get_peft_model(model,LoraConfig(r=cfg.sft_lora_rank,lora_alpha=cfg.sft_lora_alpha,lora_dropout=cfg.sft_lora_dropout,
         target_modules=['q_proj','k_proj','v_proj','o_proj','gate_proj','up_proj','down_proj'],bias='none',task_type='CAUSAL_LM'))
     if any(p.requires_grad and 'lora_' not in n for n,p in model.named_parameters()):raise RuntimeError('Only LoRA may be trained')
+    if cfg.sft_gradient_checkpointing:model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant':False})
     folder=out/'sft'/name;folder.mkdir(parents=True,exist_ok=True)
     identity_path=folder/'identity.json'
     if identity_path.exists() and json.loads(identity_path.read_text())['identity']!=identity:raise RuntimeError('Stale SFT checkpoint')
     atomic_json(dict(identity=identity),identity_path)
+    # Fixed common microbatch, tested on the longest actual accepted sequence.
+    longest=sorted(data['examples']+data.get('validation',[]),key=lambda r:len(r['input_ids']),reverse=True)[:cfg.sft_batch_size]
+    model.train();torch.cuda.reset_peak_memory_stats();started=time.monotonic()
+    reserve=[]
+    try:
+        reserve=[torch.zeros(p.numel()*2,device=p.device,dtype=torch.float32) for p in model.parameters() if p.requires_grad]
+        probe={k:v.to('cuda:0') for k,v in response_collator(longest,tokenizer.pad_token_id).items()}
+        with torch.autocast('cuda',dtype=torch.float16):loss=model(**probe).loss
+        if not torch.isfinite(loss):raise RuntimeError('Nonfinite SFT preflight loss')
+        loss.backward();torch.cuda.synchronize()
+        # Reserve Adam's two FP32 moments as well as gradients before calling the batch safe.
+        preflight=dict(microbatch=cfg.sft_batch_size,max_tokens=max(len(r['input_ids']) for r in longest),
+            tokens_per_second=sum(len(r['input_ids']) for r in longest)/max(time.monotonic()-started,1e-9),
+            seconds=time.monotonic()-started,peak_bytes=torch.cuda.max_memory_allocated())
+        del loss,probe
+    except torch.cuda.OutOfMemoryError as error:
+        raise RuntimeError('SFT preflight OOM. Preserve checkpoints; configure a smaller COMMON batch/sequence length in a fresh experiment. No unilateral budget reduction.') from error
+    finally:reserve.clear();model.zero_grad(set_to_none=True);gc.collect();torch.cuda.empty_cache()
+    atomic_json(preflight,folder/'preflight.json');seed_all(cfg.seed)
+    resume=complete_checkpoint(folder)
+    exposure=dict(tokens={l:0 for l in cfg.training_languages},examples={l:0 for l in cfg.training_languages},steps=[])
+    if resume:
+        exposure_path=Path(resume)/'exposure.json'
+        if not exposure_path.exists():raise RuntimeError('Missing SFT exposure checkpoint')
+        exposure=json.loads(exposure_path.read_text())
+    ExposureTrainer=exposure_trainer_class(cfg,exposure)
     class SafeBoundary(TrainerCallback):
+        def on_step_begin(self,args,state,control,**kwargs):
+            self.started=time.monotonic();self.tokens=sum(exposure['tokens'].values())
+        def on_step_end(self,args,state,control,**kwargs):
+            torch.cuda.synchronize();elapsed=time.monotonic()-self.started
+            exposure['steps'].append(dict(step=state.global_step,seconds=elapsed,tokens=sum(exposure['tokens'].values())-self.tokens,
+                peak_bytes=torch.cuda.max_memory_allocated()))
+            if len(exposure['steps'])==10:
+                seconds=sum(r['seconds'] for r in exposure['steps'])/10
+                print('SFT estimate from ten updates (not a cutoff):',seconds*state.max_steps/3600,'hours per variant',flush=True)
+
         def on_epoch_end(self,args,state,control,**kwargs):
             control.should_save=True;return control
         def on_save(self,args,state,control,**kwargs):
             path=Path(args.output_dir)/f'checkpoint-{state.global_step}'
+            atomic_json(exposure,path/'exposure.json')
             required=('trainer_state.json','optimizer.pt','scheduler.pt','rng_state.pth','adapter_model.safetensors')
             if not all((path/p).is_file() for p in required):raise RuntimeError('Incomplete SFT optimizer checkpoint')
             atomic_json(dict(files={str(p.relative_to(path)):file_digest(p) for p in path.rglob('*') if p.is_file() and p.name!='complete.json'}),path/'complete.json')
     args=TrainingArguments(output_dir=str(folder),num_train_epochs=cfg.sft_epochs,max_steps=-1,
         per_device_train_batch_size=cfg.sft_batch_size,gradient_accumulation_steps=cfg.sft_gradient_accumulation,
         learning_rate=cfg.sft_learning_rate,lr_scheduler_type='linear',warmup_ratio=.03,weight_decay=0.,
-        fp16=True,bf16=False,gradient_checkpointing=True,gradient_checkpointing_kwargs={'use_reentrant':False},
+        fp16=True,bf16=False,gradient_checkpointing=cfg.sft_gradient_checkpointing,gradient_checkpointing_kwargs={'use_reentrant':False},
         save_strategy='steps',save_steps=cfg.sft_save_steps,save_total_limit=3,logging_steps=10,
-        eval_strategy='no',load_best_model_at_end=False,seed=cfg.seed,data_seed=cfg.seed,
+        eval_strategy='epoch' if data.get('validation') else 'no',per_device_eval_batch_size=cfg.sft_batch_size,prediction_loss_only=True,load_best_model_at_end=False,seed=cfg.seed,data_seed=cfg.seed,
         report_to=[],remove_unused_columns=False,dataloader_num_workers=0,optim='adamw_torch',label_names=['labels'])
-    samples=[dict(input_ids=r['input_ids'],labels=r['labels']) for r in data['examples']]
-    trainer=Trainer(model=model,args=args,train_dataset=samples,
-                    data_collator=lambda rows:response_collator(rows,tokenizer.pad_token_id),callbacks=[SafeBoundary()])
-    trainer.train(resume_from_checkpoint=complete_checkpoint(folder))
+    samples=[dict(input_ids=r['input_ids'],labels=r['labels'],_language=r['language']) for r in data['examples']]
+    evaluation={l:[dict(input_ids=r['input_ids'],labels=r['labels']) for r in data.get('validation',[]) if r['language']==l] for l in cfg.training_languages}
+    def collate(rows):
+        batch=response_collator(rows,tokenizer.pad_token_id)
+        if '_language' in rows[0]:batch['_languages']=[r['_language'] for r in rows]
+        return batch
+    trainer=ExposureTrainer(model=model,args=args,train_dataset=samples,eval_dataset=evaluation if data.get('validation') else None,
+                    data_collator=collate,callbacks=[SafeBoundary()])
+    trainer.train(resume_from_checkpoint=resume)
     if trainer.state.epoch is None or trainer.state.epoch<cfg.sft_epochs:raise RuntimeError('SFT epochs incomplete')
+    expected={l:cfg.sft_epochs*sum(r['language']==l for r in data['examples']) for l in cfg.training_languages}
+    if exposure['examples']!=expected:raise RuntimeError('SFT exposure incomplete or duplicated')
+    if exposure['tokens']!={l:cfg.sft_epochs*audit['tokens_per_language'][l] for l in cfg.training_languages}:raise RuntimeError('SFT effective token budget mismatch')
+    atomic_json(dict(exposure=exposure,loss_history=trainer.state.log_history),folder/'training_metrics.json')
+    trainable_parameters=sum(p.numel() for p in model.parameters() if p.requires_grad)
+    from transformers import AutoModelForCausalLM
+    import copy
+    dense_config=copy.deepcopy(model.config)
+    if hasattr(dense_config,'quantization_config'):del dense_config.quantization_config
+    with torch.device('meta'):dense=AutoModelForCausalLM.from_config(dense_config)
+    architecture_parameters=sum(p.numel() for p in dense.parameters());del dense
     adapter=folder/'adapter';model.save_pretrained(adapter,safe_serialization=True)
     epochs=trainer.state.epoch;steps=trainer.state.global_step
     if nf4:
@@ -123,9 +201,10 @@ def train_sft(cfg,lock,tokenizer,manifest,name):
         files=file_map(out,destination);del merged
     spec['stored_bytes']=sum((out/p).stat().st_size for p in files)
     spec['adapter_bytes']=sum(p.stat().st_size for p in adapter.rglob('*') if p.is_file()) if nf4 else 0
+    spec.update(architecture_parameters=architecture_parameters,trainable_adapter_parameters=trainable_parameters)
     record=dict(identity=identity,files=files,spec=spec,completed_epochs=epochs,optimizer_steps=steps,
                 accepted_digest=audit['accepted_digest'],benchmark_signature=manifest['signature'],
-                tokens_per_language_per_epoch=audit['tokens_per_language'],stop_reason='epochs',
+                tokens_per_language_per_epoch=audit['tokens_per_language'],actual_exposure=exposure,trainable_adapter_parameters=trainable_parameters,stop_reason='epochs',
                 inference_format='NF4 base plus unmerged LoRA adapter' if nf4 else 'merged FP16')
     atomic_json(record,done)
     del trainer,model;gc.collect();torch.cuda.empty_cache()

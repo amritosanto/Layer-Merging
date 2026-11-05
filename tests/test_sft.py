@@ -22,7 +22,7 @@ def test_eight_blocks_and_old_checkpoint_rejected(tiny):
     _,six,_,_,families=tiny
     cfg=Config.load('config.smoke_sft13.json')
     assert (cfg.epochs,cfg.max_optimizer_steps,cfg.training_hours)==(10,0,0)
-    assert (cfg.train_tokens_per_language,cfg.validation_tokens_per_language,cfg.ranking_tokens_per_language)==(100000,20000,4096)
+    assert (cfg.train_tokens_per_language,cfg.validation_tokens_per_language,cfg.ranking_tokens_per_language)==(10000,3000,2048)
     eight=PairWeightMerger(cfg,families)
     assert len(eight.blocks)==8 and eight.blocks[0].heads==6 and eight.family.embedding_dim==384
     with pytest.raises(RuntimeError):eight.load_state_dict(six.state_dict())
@@ -41,7 +41,7 @@ def test_audit_exact_near_and_short_answers():
 
 def test_paired_sft_preparation_and_fail_closed(tmp_path,monkeypatch):
     import src.sft_data as s
-    cfg=Config.load('config.smoke_sft13.json');cfg.output_dir=str(tmp_path);cfg.training_languages=['English'];cfg.sft_examples_per_language=1
+    cfg=Config.load('config.smoke_sft13.json');cfg.output_dir=str(tmp_path);cfg.training_languages=['English'];cfg.sft_examples_per_language=1;cfg.sft_mixture=False;cfg.sft_validation_examples_per_language=0
     lock={'dataset_revisions':{cfg.sft_dataset:'immutable'}};manifest=frozen()
     class Stream(list):
         def shuffle(self,**kw):return self

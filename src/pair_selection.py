@@ -7,11 +7,16 @@ def valid_plan(pairs,n=28,allow_empty=False):
         raise ValueError('Require nonoverlapping original adjacent pairs')
     return pairs
 
-def task_for_batch(seed,epoch,batch_index,n=28,min_pairs=1,max_pairs=None):
+def task_for_batch(seed,epoch,batch_index,n=28,min_pairs=1,max_pairs=None,weights=None):
     maximum=min(n//2,max_pairs or n//2)
     if not 1<=min_pairs<=maximum:raise ValueError('Invalid training pair range')
     # Every other task is a single pair; the others cycle all compression levels.
     k=min_pairs if batch_index%2==0 else min_pairs+(batch_index//2)%(maximum-min_pairs+1)
+    if weights:
+        if len(weights)!=maximum-min_pairs+1 or any(not isinstance(w,int) or w<=0 for w in weights):raise ValueError('Positive integer depth weights required')
+        cycle=np.repeat(np.arange(min_pairs,maximum+1),weights)
+        rng=np.random.default_rng(seed+epoch*1000003+batch_index//len(cycle))
+        k=int(rng.permutation(cycle)[batch_index%len(cycle)])
     if k==1:
         return (int(np.random.default_rng(seed+epoch).permutation(n-1)[(batch_index//2)%(n-1)]),)
     rng=np.random.default_rng(seed+epoch*1000003+batch_index)

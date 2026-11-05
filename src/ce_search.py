@@ -166,6 +166,8 @@ def search_and_export(experiment,export=True):
     pd.DataFrame(frontier).to_csv(out/'rankings/pareto_frontier.csv',index=False)
     from .reporting import plot_pareto
     plot_pareto([reference]+finalists,selected,threshold,out/'charts/ce_compression_pareto.png')
+    import shutil
+    shutil.copyfile(out/'charts/ce_compression_pareto.png',out/'rankings/ce_compression_frontier.png')
     selected=dict(selected,cache_key=key,checkpoint_hash=checkpoint_hash,baseline=base,
                   training_updates=saved['state']['step'],completed_epochs=saved['state']['epoch'],
                   searched_plans=len(rows),nf4_finalists=len(finalists),max_candidate_plans=cfg.max_candidate_plans,

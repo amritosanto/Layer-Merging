@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
-VERSION = 'qwen3-eight-block-sft-v5'
+VERSION = 'qwen3-heavy-sft-v6'
 
 @dataclass
 class Config:
@@ -20,6 +20,17 @@ class Config:
     max_final_nf4_candidates: int = 3
     ce_reference: str = 'original_nf4'
     post_sft: bool = False
+    sft_enabled: bool = None
+    rl_enabled: bool = False
+    merge_count_weights: tuple = ()
+    sft_mixture: bool = False
+    sft_validation_examples_per_language: int = 0
+    sft_max_seq_length: int = None
+    sft_lora_dropout: float = 0.0
+    sft_gradient_checkpointing: bool = True
+    sft_response_only_loss: bool = True
+    sft_max_generated_attempts: int = 100000
+    merger_progress_validation_tokens: int = 0
     sft_dataset: str = 'CohereLabs/aya_dataset'
     sft_revision: str = 'main'  # Resolved to SHA in the immutable run lock.
     sft_epochs: int = 2
@@ -90,6 +101,15 @@ class Config:
     bootstrap_samples: int = 2000
 
     def validate(self):
+        if self.sft_enabled is not None:self.post_sft=self.sft_enabled
+        if self.sft_max_seq_length is not None:self.sft_max_length=self.sft_max_seq_length
+        assert not self.rl_enabled and self.sft_response_only_loss
+        assert 0<=self.sft_lora_dropout<1 and 2<=self.sft_max_length<=512
+        assert self.sft_validation_examples_per_language>=0 and self.sft_max_generated_attempts>0
+        assert self.merger_progress_validation_tokens==0 or 2<=self.merger_progress_validation_tokens<=self.validation_tokens_per_language
+        if self.merge_count_weights:
+            assert len(self.merge_count_weights)==self.max_merged_pairs-self.min_merged_pairs+1
+            assert all(isinstance(w,int) and w>0 for w in self.merge_count_weights)
         assert self.mode in ('smoke','standard')
         assert self.quantization == 'nf4' and self.teacher_precision == 'fp16'
         assert 1 <= self.min_merged_pairs <= self.max_merged_pairs <= 14

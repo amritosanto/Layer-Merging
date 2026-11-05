@@ -14,6 +14,29 @@ def atomic_json(value, path):
     tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     tmp.replace(path)
 
+
+def sanitize_diagnostics(value):
+    """Sanitize diagnostics only; scientific manifests still use strict atomic_json."""
+    import math
+    import numbers
+    bad=[]
+    def visit(item,path):
+        if isinstance(item,dict):return {str(k):visit(v,path+'.'+str(k) if path else str(k)) for k,v in item.items()}
+        if isinstance(item,(list,tuple)):return [visit(v,f'{path}[{i}]') for i,v in enumerate(item)]
+        if isinstance(item,torch.Tensor) and item.numel()==1:item=item.detach().cpu().item()
+        if isinstance(item,numbers.Integral) and not isinstance(item,bool):return int(item)
+        if isinstance(item,numbers.Real) and not isinstance(item,(bool,int)):
+            if not math.isfinite(float(item)):bad.append(path);return None
+            return float(item)
+        return item
+    return visit(value,''),bad
+
+
+def diagnostic_json(value,path):
+    clean,bad=sanitize_diagnostics(value)
+    atomic_json(dict(clean,nonfinite_metrics=bad),path)
+    return bad
+
 def atomic_torch(value, path):
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + '.tmp')

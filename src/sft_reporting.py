@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from .benchmark_evaluation import read_predictions
+from .benchmark_evaluation import read_predictions,prompt_path,evaluation_namespace
 from .reporting import bootstrap_difference
 from .sft_training import verified_specs,NAMES
 from .trainer import prepare_run
@@ -13,10 +13,10 @@ from .utils import digest
 
 def make_sft_report(cfg):
     out=Path(cfg.output_dir);lock=prepare_run(cfg);specs=verified_specs(cfg,lock)
-    manifest=json.loads((out/f'manifests/benchmark_prompts_{cfg.evaluation_mode}.json').read_text(encoding='utf-8'))
+    manifest=json.loads(prompt_path(cfg).read_text(encoding='utf-8'))
     gate=json.loads((out/'manifests/sft_verified.json').read_text())
     identities={s['name']:digest([manifest['signature'],s,gate['weight_hashes'][s['name']],'evaluation']) for s in specs}
-    root=out/'benchmark_results'/cfg.evaluation_mode;table=[];frequencies=[]
+    root=out/'benchmark_results'/evaluation_namespace(cfg);table=[];frequencies=[]
     for job in manifest['jobs']:
         expected={e['id']:e for e in job['examples']};paired=[]
         for name in NAMES:
@@ -75,7 +75,7 @@ def make_sft_report(cfg):
         if metrics.exists():
             steps=json.loads(metrics.read_text())['exposure']['steps'];seconds=sum(r['seconds'] for r in steps);tokens=sum(r['tokens'] for r in steps)
             performance.append(dict(kind='SFT optimizer steps only',variant=spec['name'],seconds=seconds,new_input_tokens=tokens,
-                tokens_per_second=tokens/max(seconds,1e-9),optimizer_steps=len(steps),mean_step_seconds=seconds/max(len(steps),1),peak_bytes=max((r['peak_bytes'] for r in steps),default=0)))
+                tokens_per_second=tokens/max(seconds,1e-9),optimizer_steps=len(steps),optimizer_updates_per_second=len(steps)/max(seconds,1e-9),mean_step_seconds=seconds/max(len(steps),1),peak_bytes=max((r['peak_bytes'] for r in steps),default=0)))
     pd.DataFrame(performance).to_csv(root/'performance_summary.csv',index=False)
     from .reporting import plt
     fig,ax=plt.subplots(figsize=(11,5));x=np.arange(len(frame))
@@ -96,7 +96,7 @@ def make_sft_report(cfg):
           'Contamination exclusions and provenance: manifests/sft_contamination_audit.json. '+audit['limitations'],
           f"SFT composition and shortfalls: {audit.get('actual_allocation')}; Aya shortfalls: {audit.get('aya_shortfalls')}. Arabic and Albanian benchmark languages received no dedicated SFT.",
           f"Architecture-level parameter reduction: {1-specs[1]['architecture_parameters']/specs[0]['architecture_parameters'] if specs[0].get('architecture_parameters') and specs[1].get('architecture_parameters') else 'unavailable'}. Pre-SFT perplexity ratio: {selected.get('perplexity_ratio')}.",
-          'Seven hours is a planning target, not a measured completion claim or cutoff. Observed timing, throughput and memory are in performance_summary.csv and SFT preflight/training metrics. Per-language validation losses use the independent SFT validation partition; no benchmark-based checkpoint selection.',
+          'Runtime is a planning target, not a measured completion claim or cutoff. Observed timing, throughput and memory are in performance_summary.csv and SFT preflight/training metrics. Per-language validation losses use the independent SFT validation partition; no benchmark-based checkpoint selection.',
           '![Post-SFT language accuracy](charts/post_sft_accuracy.png)',
           '## Language accuracy',frame.to_csv(index=False),'## Macro aggregate accuracy',summary.to_csv(index=False),
           'Accuracy differences and paired confidence intervals are percentage points (merged minus original); retention is a ratio and undefined for zero baseline accuracy. The five-point accuracy diagnostic is separate from the 13% relative CE constraint.',
@@ -104,4 +104,10 @@ def make_sft_report(cfg):
           f"Post-SFT total storage reduction versus FP16 SFT: {100*(1-specs[1]['stored_bytes']/specs[0]['stored_bytes']):.2f}%. NF4 storage includes the base and separate LoRA adapter; FP16 storage is the merged inference model. Training optimizer checkpoints are excluded from inference size.",
           '![Pre-SFT CE frontier](charts/ce_compression_pareto.png)',
           'Pilot confidence intervals quantify only these paired samples. Lexical/provenance filtering cannot prove absence of semantic or translated contamination. No automatic retraining or benchmark-driven plan changes are performed.']
-    path=out/'REPORT.md';path.write_text('\n\n'.join(text)+'\n',encoding='utf-8');return path
+    text.insert(1,f'{cfg.pilot_questions}-question-per-language pilot: preliminary results, not confirmation of a population-level accuracy threshold.')
+    runtime_rows=[json.loads(p.read_text()) for p in sorted((out/'logs/stage_runs').glob('*.json'))]
+    pd.DataFrame(runtime_rows).to_csv(root/'stage_runtimes.csv',index=False)
+    text.append('Recorded command runtimes (concurrent parent/child stages overlap; do not sum them):\n'+pd.DataFrame(runtime_rows).to_csv(index=False))
+    text.append(f'Planning target: {cfg.planning_hours} hours; not a cutoff or a measured-completion claim. GPU utilization and power observations are in each SFT training_metrics.json; unused VRAM does not imply idle compute.')
+    path=out/'REPORT.md';path.write_text('\n\n'.join(text)+'\n',encoding='utf-8')
+    (out/f'REPORT_{evaluation_namespace(cfg)}.md').write_text(path.read_text(encoding='utf-8'),encoding='utf-8');return path

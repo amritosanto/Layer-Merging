@@ -16,6 +16,23 @@ from .quantization import load_model,dequantized_copy,MODEL_LOAD_LOCK,verify_nf4
 
 def content_id(row):return hashlib.sha256(row['question'].strip().encode()).hexdigest()
 
+
+def evaluation_namespace(cfg):
+    return f'{cfg.evaluation_mode}_{cfg.pilot_questions}' if cfg.benchmark_audit_questions else cfg.evaluation_mode
+
+
+def prompt_path(cfg,audit=False):
+    count=cfg.benchmark_audit_questions if audit else cfg.pilot_questions
+    namespace=f'{cfg.evaluation_mode}_{count}' if cfg.benchmark_audit_questions else cfg.evaluation_mode
+    return Path(cfg.output_dir)/f'manifests/benchmark_prompts_{namespace}.json'
+
+
+def prepare_audit_benchmarks(cfg,lock,tokenizer):
+    import copy
+    audit=copy.copy(cfg)
+    if cfg.benchmark_audit_questions:audit.pilot_questions=cfg.benchmark_audit_questions
+    return prepare_benchmarks(audit,lock,tokenizer)
+
 def stratified_sample(rows,n,seed):
     rng=np.random.default_rng(seed); groups={}
     for row in rows:groups.setdefault(row.get('subject','unknown'),[]).append(row)
@@ -33,7 +50,18 @@ def mc_prompt(support,target):
     return '\n\n'.join([question(r)+' '+chr(65+r['label']) for r in support]+[question(target)])
 
 def prepare_benchmarks(cfg,lock,tokenizer):
-    path=Path(cfg.output_dir)/f'manifests/benchmark_prompts_{cfg.evaluation_mode}.json'
+    path=prompt_path(cfg)
+    if cfg.benchmark_audit_questions and cfg.pilot_questions<cfg.benchmark_audit_questions:
+        full=prepare_audit_benchmarks(cfg,lock,tokenizer)
+        protocol=dict(full['protocol'],pilot=cfg.pilot_questions,audit_signature=full['signature'],subset='seeded hash subset of pre-SFT audited questions')
+        jobs=[]
+        for job in full['jobs']:
+            examples=sorted(job['examples'],key=lambda e:digest([cfg.seed,job['benchmark'],e['id']]))[:cfg.pilot_questions]
+            jobs.append(dict(job,examples=examples,requested_questions=cfg.pilot_questions,
+                count_reason='requested count available' if len(examples)==cfg.pilot_questions else 'fewer eligible audited examples'))
+        result=dict(protocol=protocol,jobs=jobs,signature=digest(dict(protocol=protocol,jobs=jobs)))
+        if path.exists() and json.loads(path.read_text(encoding='utf-8'))!=result:raise RuntimeError('Changed evaluation subset cache')
+        atomic_json(result,path);return result
     protocol=dict(quantization=nf4_config().to_dict(),mgsm_max_new_tokens=cfg.mgsm_max_new_tokens,language_subset=cfg.benchmark_languages,experiment_mode=cfg.mode,mode=cfg.evaluation_mode,pilot=cfg.pilot_questions,seed=cfg.seed,
                   shots=[cfg.mmmlu_few_shot,cfg.include_few_shot,cfg.mgsm_few_shot],context=cfg.eval_context,
                   max_new_tokens=cfg.max_new_tokens,model_revision=lock['model_revision'],revisions=lock['dataset_revisions'],
@@ -219,7 +247,7 @@ def evaluate_variant(cfg,lock,manifest,variant_spec,smoke=False):
         weight_hash=module_hash(model)
         identity=digest([manifest['signature'],variant_spec,weight_hash,'smoke' if smoke else 'evaluation'])
         torch.cuda.reset_peak_memory_stats(rank); start=time.monotonic(); input_tokens=output_tokens=0
-        root=out/('preflight_predictions' if smoke else 'benchmark_results')/cfg.evaluation_mode/name; root.mkdir(parents=True,exist_ok=True)
+        root=out/('preflight_predictions' if smoke else 'benchmark_results')/evaluation_namespace(cfg)/name; root.mkdir(parents=True,exist_ok=True)
         for job in jobs[rank::needed]:
             path=root/f"{job['benchmark']}_{job['language']}.jsonl"; old=read_predictions(path)
             if any(r['identity']!=identity for r in old):raise RuntimeError(f'Stale benchmark predictions: {path}')

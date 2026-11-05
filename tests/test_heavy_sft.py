@@ -81,7 +81,8 @@ def test_numeric_ambiguity_filter():
     assert audit.match('箱は23個、中身は17個、追加は41個。')=='ambiguous_numeric_translation'
 
 
-def test_real_cpu_trainer_exposure_and_validation(tiny,tmp_path):
+@pytest.mark.parametrize('epochs',[1,2])
+def test_real_cpu_trainer_exposure_and_validation(tiny,tmp_path,epochs):
     from transformers import TrainingArguments
     from peft import get_peft_model,LoraConfig
     from src.sft_training import exposure_trainer_class,response_collator
@@ -95,14 +96,14 @@ def test_real_cpu_trainer_exposure_and_validation(tiny,tmp_path):
         if '_language' in rows[0]:batch['_languages']=[r['_language'] for r in rows]
         return batch
     cls=exposure_trainer_class(cfg,exposure)
-    args=TrainingArguments(output_dir=str(tmp_path),use_cpu=True,num_train_epochs=2,per_device_train_batch_size=1,
+    args=TrainingArguments(output_dir=str(tmp_path),use_cpu=True,num_train_epochs=epochs,per_device_train_batch_size=1,
         gradient_accumulation_steps=4,save_strategy='no',eval_strategy='epoch',report_to=[],remove_unused_columns=False,
         prediction_loss_only=True,seed=42,data_seed=42,disable_tqdm=True,label_names=['labels'])
     validation=[dict(input_ids=[3,4,5,6],labels=[-100,-100,5,6])]
     trainer=cls(model=model,args=args,train_dataset=samples,eval_dataset={'English':validation,'Hindi':validation},data_collator=collate)
     trainer.train()
-    assert trainer.state.epoch==2 and trainer.state.global_step==4
-    assert exposure['examples']=={'English':8,'Hindi':8} and exposure['tokens']=={'English':32,'Hindi':32}
+    assert trainer.state.epoch==epochs and trainer.state.global_step==2*epochs
+    assert exposure['examples']=={'English':4*epochs,'Hindi':4*epochs} and exposure['tokens']=={'English':16*epochs,'Hindi':16*epochs}
     assert any('eval_English_loss' in r for r in trainer.state.log_history)
     assert any('eval_Hindi_loss' in r for r in trainer.state.log_history)
 

@@ -64,7 +64,7 @@ def test_launcher_syntax():
     assert 'sentencepiece==' not in text and 'only-binary' in text
 
 
-@pytest.mark.parametrize('configuration,count',[('config.smoke.json',10),('config.smoke10.json',100)])
+@pytest.mark.parametrize('configuration,count',[('config.smoke.json',10),('config.smoke10.json',100),('config.smoke_sft2h.json',30)])
 def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch,configuration,count):
     from types import SimpleNamespace
     import src.benchmark_evaluation as b
@@ -95,3 +95,13 @@ def test_smoke_benchmarks_load_only_selected_configs(tmp_path,monkeypatch,config
     if count==100:assert all(len(e['support_ids'])==8 for j in result['jobs'] for e in j['examples'])
     assert prepare_benchmarks(cfg,lock,tokenizer)==result
     assert len(calls)==9  # Frozen prompt cache reused, no extra dataset loads.
+    if cfg.benchmark_audit_questions:
+        from src.benchmark_evaluation import prepare_audit_benchmarks,evaluation_namespace
+        audit=prepare_audit_benchmarks(cfg,lock,tokenizer)
+        assert all(len(j['examples'])==100 for j in audit['jobs'])
+        assert len(calls)==9
+        for small,big in zip(result['jobs'],audit['jobs']):
+            assert {e['id'] for e in small['examples']}<={e['id'] for e in big['examples']}
+        assert evaluation_namespace(cfg)=='pilot_30'
+        cfg.pilot_questions=100
+        assert prepare_benchmarks(cfg,lock,tokenizer)==audit and evaluation_namespace(cfg)=='pilot_100'

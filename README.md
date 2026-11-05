@@ -1,3 +1,39 @@
+# Fast SFT experiment: two-hour planning target
+
+Upload `Qwen3_8Block_FastSFT_2Hour_Kaggle.ipynb` to Kaggle, enable Internet and **T4 x2**, and run cells in order. It clones the repository and uses the fresh `config.smoke_sft2h.json` output directory. Two hours is a planning target, not a measured runtime or cutoff.
+
+Merger architecture/losses are unchanged: eight blocks, width 384, six heads, frozen FP16 teacher, NF4 source, ten full epochs, 10,000 / 3,000 / 2,048 tokens per language, all 14 CE-search depths and a 13% FP16-referenced CE limit. No required stage is skipped to meet the time target.
+
+Fast SFT uses **one epoch, 200 training + 25 independent validation examples per language** (1,400 + 175 total), the existing audited 40/35/25 instruction/math/MC target mixture, rank 16 / alpha 32 / dropout .05, learning rate 2e-4 and sequence limit 512. Source shortages and exclusions remain explicit.
+
+Original FP16 LoRA and merged NF4 QLoRA run in independent GPU-0/GPU-1 processes, with visibility set before CUDA initialization. Insufficient CPU/host-memory capacity triggers a logged sequential fallback. Each process measures forward/backward throughput and memory for microbatches 1/2/4/8 with optimizer-state headroom; it chooses its fastest stable batch and adjusts accumulation to preserve **effective batch eight**. An independent seeded length-bucket sampler keeps the same example order across variants. Dynamic padding is retained. Disabling autotuning uses the configured batch fallback; no silent effective-batch reduction occurs.
+
+GPU utilization/power are sampled through nvidia-smi every 30 seconds; unavailable readings are labeled. Allocated/peak VRAM, tokens/sec, step times and updates/sec are logged. The notebook launch/profile cell keeps the processes and models alive; the next cell waits for training. Inspect `logs/sft_both_console.log` for progress and errors. Rerunning the launch cell resumes completed optimizer boundaries.
+
+Diagnostic NaN/Infinity values now serialize to JSON null with metric paths recorded. Scientific manifests retain strict JSON. Actual nonfinite training losses, gradients or adapter weights still stop execution. A hash-verified completed optimizer checkpoint finalizes export directly, without training again, if a prior finalization failed. Old experiment/source identities are never bypassed; this update does not automatically migrate checkpoints from earlier code identities.
+
+```bash
+python run.py smoke --config config.smoke_sft2h.json
+# Independent stages: prepare, preflight, train, search, export,
+# sft-prepare, sft-both, sft-verify, benchmark, report
+```
+
+The final evaluation uses only `original_fp16_sft` and `merged_nf4_sft`, 30 questions per language, eight shots, and MGSM generation limit 256. Results are **preliminary**. SFT auditing freezes a 100-question superset before either fit. To evaluate 100 questions later without retraining:
+
+```bash
+python run.py benchmark --config config.smoke_sft2h_eval100.json
+python run.py report --config config.smoke_sft2h_eval100.json
+```
+
+Both configurations reference the same trained artifacts. Prediction caches and reports are separate (`pilot_30` / `pilot_100`), while the audited training identity stays fixed. Do not change the audited superset, prompts or model artifacts after training. Language tables, confidence intervals, margins, option-collapse diagnostics and storage accounting remain available. Runtime records under `logs/stage_runs` include failures/resumes; overlapping parent/child concurrent durations must not be added as elapsed wall time.
+
+The final cell checks disk capacity and creates `Qwen3_8Block_FastSFT_2Hour_WORKING.zip`, using ZIP64 and excluding itself. It prints file count/size/runtime and attempts browser download. Use **Save Version / View Output** if blocked; `SALVAGE_PARTIAL=True` permits manual recovery. Source artifacts are retained.
+
+Only synthetic CPU tests run locally. Full pretrained GPU execution, achieved throughput, the two-hour target and benchmark quality remain unverified.
+
+---
+## Earlier experiment instructions
+
 # Heavy multilingual SFT (seven-hour planning target)
 
 Use `Qwen3_8Block_HeavySFT_7Hour_Kaggle.ipynb` with Kaggle Internet and **T4 x2**. It clones this repo and uses `config.smoke_sft13.json` in a fresh `qwen3_8block_sft13_7h` output directory. CUDA PyTorch is preserved. Seven hours is a planning target, never a cutoff or promised runtime.

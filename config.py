@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
-VERSION = 'qwen3-heavy-sft-v6'
+VERSION = 'qwen3-fast-sft-v7'
 
 @dataclass
 class Config:
@@ -21,6 +21,12 @@ class Config:
     ce_reference: str = 'original_nf4'
     post_sft: bool = False
     sft_enabled: bool = None
+    sft_effective_batch_size: int = 0  # Zero keeps the explicit microbatch*accumulation fallback.
+    sft_autotune_batch: bool = False
+    sft_monitor_interval: float = 30.0
+    sft_bucket_by_length: bool = False
+    benchmark_audit_questions: int = 0  # Freeze this superset before SFT; allow smaller evaluation profiles.
+    planning_hours: float = 7.0
     rl_enabled: bool = False
     merge_count_weights: tuple = ()
     sft_mixture: bool = False
@@ -103,6 +109,11 @@ class Config:
     def validate(self):
         if self.sft_enabled is not None:self.post_sft=self.sft_enabled
         if self.sft_max_seq_length is not None:self.sft_max_length=self.sft_max_seq_length
+        assert self.sft_effective_batch_size>=0 and self.sft_monitor_interval>0 and self.planning_hours>0
+        if self.sft_autotune_batch:assert self.sft_effective_batch_size in (1,2,4,8)
+        elif self.sft_effective_batch_size:assert self.sft_effective_batch_size%self.sft_batch_size==0
+        if self.benchmark_audit_questions:
+            assert self.post_sft and self.evaluation_mode=='pilot' and 0<self.pilot_questions<=self.benchmark_audit_questions
         assert not self.rl_enabled and self.sft_response_only_loss
         assert 0<=self.sft_lora_dropout<1 and 2<=self.sft_max_length<=512
         assert self.sft_validation_examples_per_language>=0 and self.sft_max_generated_attempts>0

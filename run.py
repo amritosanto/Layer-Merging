@@ -10,16 +10,19 @@ def main():
     parser.add_argument('--benchmark',choices=['MMMLU','INCLUDE','MGSM','all'],default='all')
     args=parser.parse_args(); cfg=Config.load(args.config)
     if args.stage=='sft-both':
-        import subprocess,sys,psutil,torch
+        import subprocess,sys,psutil,torch,os
         commands=[[sys.executable,__file__,stage,'--config',args.config] for stage in ('sft-original','sft-merged')]
-        if not cfg.single_gpu_debug and torch.cuda.device_count()>=2 and psutil.virtual_memory().available>=12*2**30:
+        from src.sft_runtime import child_environments
+        environments=child_environments(os.environ,cfg.single_gpu_debug)
+        capacity=dict(gpus=torch.cuda.device_count(),available_host_gib=psutil.virtual_memory().available/2**30,cpus=psutil.cpu_count() or 1)
+        if not cfg.single_gpu_debug and capacity['gpus']>=2 and capacity['available_host_gib']>=12 and capacity['cpus']>=4:
             print('Running paired SFT concurrently on separate GPUs',flush=True)
-            processes=[subprocess.Popen(command) for command in commands]
+            processes=[subprocess.Popen(command,env=env) for command,env in zip(commands,environments)]
             codes=[process.wait() for process in processes]
             if any(codes):raise RuntimeError(f'Paired SFT interrupted/failed: {codes}; rerun individual stages to resume')
         else:
-            print('Running paired SFT sequentially: concurrent host/GPU capacity check not satisfied',flush=True)
-            for command in commands:subprocess.run(command,check=True)
+            print('Running paired SFT sequentially; require two GPUs, >=12 GiB available host RAM and >=4 CPUs. Observed:',capacity,'single_gpu_debug=',cfg.single_gpu_debug,flush=True)
+            for command,env in zip(commands,environments):subprocess.run(command,env=env,check=True)
         return
     if args.stage in ('sft-original','sft-merged'):
         import os
@@ -67,7 +70,8 @@ def main():
     if tokenizer.pad_token_id is None:tokenizer.pad_token=tokenizer.eos_token
     if args.stage=='prepare':
         prepare_data(cfg,tokenizer,lock['dataset_revisions']); return
-    manifest=prepare_benchmarks(cfg,lock,tokenizer)
+    from src.benchmark_evaluation import prepare_audit_benchmarks
+    manifest=prepare_audit_benchmarks(cfg,lock,tokenizer) if args.stage.startswith('sft-') else prepare_benchmarks(cfg,lock,tokenizer)
     if args.stage.startswith('sft-'):
         if not cfg.post_sft:raise ValueError('Use config.smoke_sft13.json')
         from src.sft_data import prepare_sft
@@ -87,4 +91,19 @@ def main():
         if not specs:raise ValueError('Unknown variant')
     for spec in specs:evaluate_variant(cfg,lock,manifest,spec)
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    import sys,time
+    started=time.time();status='failed'
+    try:
+        main();status='complete'
+    finally:
+        # Independent files prevent concurrent SFT processes from racing on one log.
+        if '--config' in sys.argv:
+            cfg_path=sys.argv[sys.argv.index('--config')+1]
+            try:
+                config=Config.load(cfg_path)
+                from src.utils import atomic_json
+                atomic_json(dict(stage=sys.argv[1],status=status,start_unix=started,end_unix=time.time(),seconds=time.time()-started),
+                    Path(config.output_dir)/'logs/stage_runs'/f'{sys.argv[1]}_{time.time_ns()}.json')
+            except Exception as log_error:print('Stage timing unavailable:',log_error,flush=True)
+

@@ -129,6 +129,7 @@ class Config:
             assert tuple(sorted(p))==p and all(b>a+1 for a,b in zip(p,p[1:])), 'Fixed layer pairs must be nonoverlapping and sorted'
             assert self.min_merged_pairs==self.max_merged_pairs==len(p), 'Fixed plan must be the only trained merge depth'
             assert self.max_relative_ce_increase is None, 'Fixed plan does not use a CE cutoff'
+            assert self.local_kl_weight>0, 'Fixed-pair Dual-KL experiment requires local KL loss'
         if self.merge_count_weights:
             assert len(self.merge_count_weights)==self.max_merged_pairs-self.min_merged_pairs+1
             assert all(isinstance(w,int) and w>0 for w in self.merge_count_weights)

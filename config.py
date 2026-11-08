@@ -29,6 +29,7 @@ class Config:
     planning_hours: float = 7.0
     rl_enabled: bool = False
     merge_count_weights: tuple = ()
+    fixed_merge_pairs: tuple = ()  # Zero-based left indices of consecutive, nonoverlapping pairs.
     sft_mixture: bool = False
     sft_validation_examples_per_language: int = 0
     sft_max_seq_length: int = None
@@ -67,6 +68,8 @@ class Config:
     weight_decay: float = 0.01
     clip_grad: float = 1.0
     kd_weight: float = 1.0
+    local_kl_weight: float = 0.0  # Default off; opt in only for fixed-pair experiments.
+    local_kl_temperature: float = 2.0
     correction_weight: float = 0.01
     ce_weight: float = 0.0
     temperature: float = 2.0
@@ -118,6 +121,14 @@ class Config:
         assert 0<=self.sft_lora_dropout<1 and 2<=self.sft_max_length<=512
         assert self.sft_validation_examples_per_language>=0 and self.sft_max_generated_attempts>0
         assert self.merger_progress_validation_tokens==0 or 2<=self.merger_progress_validation_tokens<=self.validation_tokens_per_language
+        assert self.local_kl_weight >= 0 and self.local_kl_temperature > 0
+        if self.fixed_merge_pairs:
+            p=tuple(self.fixed_merge_pairs)
+            assert all(isinstance(i,int) and not isinstance(i,bool) for i in p)
+            assert all(0<=i<27 for i in p)
+            assert tuple(sorted(p))==p and all(b>a+1 for a,b in zip(p,p[1:])), 'Fixed layer pairs must be nonoverlapping and sorted'
+            assert self.min_merged_pairs==self.max_merged_pairs==len(p), 'Fixed plan must be the only trained merge depth'
+            assert self.max_relative_ce_increase is None, 'Fixed plan does not use a CE cutoff'
         if self.merge_count_weights:
             assert len(self.merge_count_weights)==self.max_merged_pairs-self.min_merged_pairs+1
             assert all(isinstance(w,int) and w>0 for w in self.merge_count_weights)
@@ -148,7 +159,7 @@ class Config:
         if self.post_sft:
             assert self.merger_blocks==8 and self.ce_reference=='original_fp16'
             assert self.merger_width==384 and self.merger_heads==6
-            assert self.max_relative_ce_increase is not None
+            assert self.max_relative_ce_increase is not None or self.fixed_merge_pairs
             assert self.sft_dataset=='CohereLabs/aya_dataset'
         assert self.evaluation_mode in ('pilot', 'full')
         assert self.wiki_backend in ('hf','tfds')

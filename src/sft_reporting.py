@@ -86,12 +86,31 @@ def make_sft_report(cfg):
     import shutil
     for name in ('accuracy_comparison.csv','per_language_accuracy.csv','answer_option_frequencies.csv','paired_confidence_intervals.csv','performance_summary.csv'):
         shutil.copyfile(root/name,out/'benchmark_results'/name)
+    if cfg.fixed_merge_pairs:
+        ce_summary=(f"Pre-SFT CE diagnostic only, NOT a training loss, threshold or selection gate: "
+                    f"teacher FP16 ranking CE={selected['baseline']['reference_ranking']}; "
+                    f"merged NF4 ranking CE={selected['ranking_ce']}; "
+                    f"relative difference={100*selected['relative_ce_increase']:.3f}%. "
+                    "Merger training: hidden MSE + local hidden-feature KL + final vocabulary KL + correction.")
+        plan_summary=(f"User-fixed, zero-based original pairs={selected['original_layer_pairs']}; "
+                      f"remaining layers={selected['remaining_layers']}. No automatic pair search. "
+                      f"Pre-SFT savings vs original FP16={100*selected['actual_reduction']:.2f}%; "
+                      f"vs original NF4={100*selected['reduction_vs_original_nf4']:.2f}%.")
+    else:
+        ce_summary=(f"Pre-SFT ranking diagnostic only: original FP16 CE={selected['baseline']['reference_ranking']}; "
+                    f"merged NF4 CE={selected['ranking_ce']}; relative change={100*selected['relative_ce_increase']:.3f}%; "
+                    f"limit={100*cfg.max_relative_ce_increase:.1f}%. Feasible={selected['feasible']}; "
+                    f"CE target met={selected['ce_target_met']}. No benchmark accuracy enters selection.")
+        plan_summary=(f"Selected pairs={selected['pairs']}; remaining layers={selected['remaining_layers']}. "
+                      f"Search is budget-limited, not a global optimum. "
+                      f"Pre-SFT savings vs original 16-bit={100*selected['actual_reduction']:.2f}%; "
+                      f"vs original NF4={100*selected['reduction_vs_original_nf4']:.2f}%.")
     text=['# Eight-block merger: post-SFT FP16 versus NF4',
           'This comparison includes the combined effects of quantization, merging, and SFT. It does not isolate the effect of layer merging.',
           f"Merger training: {selected['completed_epochs']} epochs, {selected['training_updates']} optimizer updates. Eight weight-attention blocks; old six-block checkpoints are incompatible.",
-          f"Pre-SFT internal ranking diagnostic only: original FP16 CE={selected['baseline']['reference_ranking']}; merged NF4 CE={selected['ranking_ce']}; relative change={100*selected['relative_ce_increase']:.3f}%; limit={100*cfg.max_relative_ce_increase:.1f}%. Feasible={selected['feasible']}; CE target met={selected['ce_target_met']}. No benchmark accuracy enters selection.",
+          ce_summary,
           f"Separate full validation: original FP16 CE={selected['baseline']['reference_validation']}; merged NF4 CE={selected['final_nf4_validation_ce']}. These are pre-SFT diagnostics, not final benchmark scores.",
-          f"Selected pairs={selected['pairs']}; remaining layers={selected['remaining_layers']}. Search is budget-limited, not a global optimum. Pre-SFT savings vs original 16-bit={100*selected['actual_reduction']:.2f}%; vs original NF4={100*selected['reduction_vs_original_nf4']:.2f}%.",
+          plan_summary,
           f"Both SFT models used {cfg.sft_epochs} complete epochs, rank {cfg.sft_lora_rank}, learning rate {cfg.sft_learning_rate}, the same accepted IDs and response-only labels. Accepted examples/language={audit['examples_per_language']}; tokens/language/epoch={audit['tokens_per_language']}.",
           'Contamination exclusions and provenance: manifests/sft_contamination_audit.json. '+audit['limitations'],
           f"SFT composition and shortfalls: {audit.get('actual_allocation')}; Aya shortfalls: {audit.get('aya_shortfalls')}. Arabic and Albanian benchmark languages received no dedicated SFT.",
@@ -99,10 +118,10 @@ def make_sft_report(cfg):
           'Runtime is a planning target, not a measured completion claim or cutoff. Observed timing, throughput and memory are in performance_summary.csv and SFT preflight/training metrics. Per-language validation losses use the independent SFT validation partition; no benchmark-based checkpoint selection.',
           '![Post-SFT language accuracy](charts/post_sft_accuracy.png)',
           '## Language accuracy',frame.to_csv(index=False),'## Macro aggregate accuracy',summary.to_csv(index=False),
-          'Accuracy differences and paired confidence intervals are percentage points (merged minus original); retention is a ratio and undefined for zero baseline accuracy. The five-point accuracy diagnostic is separate from the 13% relative CE constraint.',
+          'Accuracy differences and paired confidence intervals are percentage points (merged minus original); retention is a ratio and undefined for zero baseline accuracy. The accuracy diagnostic does not govern fixed-plan training.',
           '## Final inference storage',storage.to_csv(index=False),
           f"Post-SFT total storage reduction versus FP16 SFT: {100*(1-specs[1]['stored_bytes']/specs[0]['stored_bytes']):.2f}%. NF4 storage includes the base and separate LoRA adapter; FP16 storage is the merged inference model. Training optimizer checkpoints are excluded from inference size.",
-          '![Pre-SFT CE frontier](charts/ce_compression_pareto.png)',
+          ('Fixed-pair experiment: no CE frontier or threshold-based selection.' if cfg.fixed_merge_pairs else '![Pre-SFT CE frontier](charts/ce_compression_pareto.png)'),
           'Pilot confidence intervals quantify only these paired samples. Lexical/provenance filtering cannot prove absence of semantic or translated contamination. No automatic retraining or benchmark-driven plan changes are performed.']
     text.insert(1,f'{cfg.pilot_questions}-question-per-language pilot: preliminary results, not confirmation of a population-level accuracy threshold.')
     runtime_rows=[json.loads(p.read_text()) for p in sorted((out/'logs/stage_runs').glob('*.json'))]

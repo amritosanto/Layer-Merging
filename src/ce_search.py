@@ -55,6 +55,11 @@ def search_and_export(experiment,export=True):
         if any(not (out/rel).is_file() or file_digest(out/rel)!=sha for rel,sha in final['files'].items()):raise RuntimeError('Final export missing or modified')
         atomic_json(final,out/'rankings/selected_plan.json')
         return final
+    if cfg.fixed_merge_pairs:
+        # No CE cutoff or candidate search: optimize the four fixed replacements.
+        # CE is still measured for science/reporting, never used as a gate.
+        from .fixed_plan import export_fixed_plan
+        return export_fixed_plan(e,saved,key,checkpoint_hash,export=export)
     path=out/'rankings/ce_cache.json'
     cache=json.loads(path.read_text()) if path.exists() else dict(key=key,plans={})
     if cache['key']!=key:raise RuntimeError('CE cache belongs to different checkpoint/data/protocol')

@@ -153,7 +153,10 @@ class AnchoredExperiment:
             identity=output_objectives(direct,direct,ids,self.teacher.lm_head,self.teacher.lm_head,cfg,False)[0]
             assert abs(float(identity))<1e-5
         self.dual.sync(); self.dual.clear()
-        loss,_,work=self.dual.loss(ids,(0,4,8,12,16)); loss.backward()
+        test_plan=tuple(cfg.fixed_merge_pairs) if cfg.fixed_merge_pairs else (0,4,8,12,16)
+        loss,loss_terms,work=self.dual.loss(ids,test_plan); loss.backward()
+        if cfg.fixed_merge_pairs:
+            assert torch.isfinite(loss_terms['local_hidden_kl']) and loss_terms['local_hidden_kl']>=0
         for worker in self.dual.workers:
             assert any(p.grad is not None and p.grad.abs().sum()>0 for p in worker.merger.dec.parameters())
         primary=list(self.merger.dec.parameters())[0]
@@ -187,7 +190,8 @@ class AnchoredExperiment:
                 self.dual.sync()
                 for trial in range(2):
                     self.dual.clear(); started=time.monotonic()
-                    loss,_,work=self.dual.loss(batch,tuple(range(0,2*self.cfg.max_merged_pairs,2))); loss.backward(); self.dual.reduce(); self.dual.synchronize()
+                    probe_pairs=tuple(self.cfg.fixed_merge_pairs) if self.cfg.fixed_merge_pairs else tuple(range(0,2*self.cfg.max_merged_pairs,2))
+                    loss,_,work=self.dual.loss(batch,probe_pairs); loss.backward(); self.dual.reduce(); self.dual.synchronize()
                     duration=time.monotonic()-started
                     if not torch.isfinite(loss):raise FloatingPointError('Nonfinite batch probe')
                     del loss
@@ -215,7 +219,7 @@ class AnchoredExperiment:
         limit=0 if full else self.cfg.merger_progress_validation_tokens
         teacher=self.score(model=self.teacher,token_limit=limit)[0]
         # One deterministic representative plan, not a sweep over all levels.
-        plan=tuple(range(0,2*min(3,self.cfg.max_merged_pairs),2))
+        plan=tuple(self.cfg.fixed_merge_pairs) if self.cfg.fixed_merge_pairs else tuple(range(0,2*min(3,self.cfg.max_merged_pairs),2))
         ce=self.score(plan,token_limit=limit)[0]
         row=dict(step=self.state['step'],epoch=self.state['epoch'],teacher_ce=teacher,
                  validation_ce=ce,selection_ce_gap=ce-teacher,validation_tokens_per_language=limit or self.cfg.validation_tokens_per_language)
@@ -242,7 +246,8 @@ class AnchoredExperiment:
                     for j in range(cursor+1,stop):
                         if len(windows[j][1])!=len(windows[cursor][1]):
                             stop=j; break
-                    plan=task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs,weights=self.cfg.merge_count_weights)
+                    plan=(tuple(self.cfg.fixed_merge_pairs) if self.cfg.fixed_merge_pairs else
+                          task_for_batch(self.cfg.seed,self.state['epoch'],self.state['step'],min_pairs=self.cfg.min_merged_pairs,max_pairs=self.cfg.max_merged_pairs,weights=self.cfg.merge_count_weights))
                     self.dual.sync(); self.dual.clear(); totals={}; work_total=[0]*len(self.dual.workers)
                     for d in range(len(work_total)):torch.cuda.reset_peak_memory_stats(d)
                     for begin in range(cursor,stop,bs):
